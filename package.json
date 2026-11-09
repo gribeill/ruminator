@@ -1,0 +1,25 @@
+{
+  "name": "arxiv-digest",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node src/cli.ts start",
+    "fetch": "node src/cli.ts fetch",
+    "serve": "node src/cli.ts serve",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.0.0",
+    "katex": "^0.19.1"
+  },
+  "devDependencies": {
+    "@types/katex": "^0.16.8",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0"
+  }
+}

@@ -1,0 +1,153 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<rss xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" version="2.0">
+  <channel>
+    <title>quant-ph updates on arXiv.org</title>
+    <link>http://rss.arxiv.org/rss/quant-ph</link>
+    <description>quant-ph updates on the arXiv.org e-print archive.</description>
+    <atom:link href="http://rss.arxiv.org/rss/quant-ph" rel="self" type="application/rss+xml"/>
+    <docs>http://www.rssboard.org/rss-specification</docs>
+    <language>en-us</language>
+    <lastBuildDate>Mon, 09 Nov 2026 05:00:08 +0000</lastBuildDate>
+    <managingEditor>rss-help@arxiv.org</managingEditor>
+    <pubDate>Mon, 09 Nov 2026 00:00:00 -0500</pubDate>
+    <skipDays>
+      <day>Saturday</day>
+      <day>Sunday</day>
+    </skipDays>
+    <item>
+      <title>Integral zeros of Krawtchouk polynomials and quantum entanglements</title>
+      <link>https://arxiv.org/abs/2611.08518</link>
+      <description>arXiv:2611.08518v1 Announce Type: new 
+Abstract: In Heo and Kiem (2019), the authors raised a problem relating integral zeros of binary Krawtchouk polynomials, parametrized by quadruples $(m,n,k,\ell)$ with $m\le n$ and $k\le \ell$, to the existence of pairs of subspaces satisfying the range criterion in quantum information theory, and settled the symmetric case $k=\ell$. In this paper, we solve the problem for the following three asymmetric families:
+  $(m,n,k,\ell)=(3,t^2-1,t(t-1)/2,t(t+1)/2)$, $t\ge2$;
+  $(m,n,k,\ell)=(4,3t^2+2t-1,(3t^2-t)/2,(3t^2+5t+2)/2)$, $t\ge2$;
+  $(m,n,k,\ell)=(4,3s^2+4s,(3s^2+s)/2,(3s^2+7s+4)/2)$, $s\ge1$.
+  The remaining cases are sporadic zeros, with only finitely many for each $m\ge5$.</description>
+      <guid isPermaLink="false">oai:arXiv.org:2611.08518v1</guid>
+      <category>quant-ph</category>
+      <pubDate>Mon, 09 Nov 2026 00:00:00 -0500</pubDate>
+      <arxiv:announce_type>new</arxiv:announce_type>
+      <dc:rights>http://arxiv.org/licenses/nonexclusive-distrib/1.0/</dc:rights>
+      <dc:creator>Jaeseong Heo, Young-Hoon Kiem, Chul-hee Lee</dc:creator>
+    </item>
+    <item>
+      <title>Thermodynamics of Speed and Efficiency with Quantum Feedback</title>
+      <link>https://arxiv.org/abs/2611.08564</link>
+      <description>arXiv:2611.08564v1 Announce Type: new 
+Abstract: Rapid thermodynamic operations generally entail irreversible dissipation, giving rise to trade-offs between operating speed and thermodynamic cost. Yet, how quantum feedback fundamentally reshapes these trade-offs remains elusive. Here, we derive a finite-time current--dissipation relation for continuously monitored open quantum dynamics with jump feedback. From this fundamental relation, we establish a quantum speed limit and a power-efficiency trade-off for stationary information engines, identifying how feedback affects state transformations and the performance of engines through both informational entropy and direct dynamical contributions. Our results provide a quantitative foundation for fast, low-dissipation quantum thermodynamics in the presence of feedback control, exemplified by attaining the generalized Landauer bound in finite-time information erasure and approaching unit information efficiency at finite power in the large-system limit of a collective engine.</description>
+      <guid isPermaLink="false">oai:arXiv.org:2611.08564v1</guid>
+      <category>quant-ph</category>
+      <category>cond-mat.mes-hall</category>
+      <category>cond-mat.stat-mech</category>
+      <pubDate>Mon, 09 Nov 2026 00:00:00 -0500</pubDate>
+      <arxiv:announce_type>new</arxiv:announce_type>
+      <dc:rights>http://creativecommons.org/licenses/by/4.0/</dc:rights>
+      <dc:creator>Yue Liu, Ryotaro Honma, Ruicheng Bao, Tan Van Vu</dc:creator>
+    </item>
+    <item>
+      <title>Magic Is in the Eye of the Measure</title>
+      <link>https://arxiv.org/abs/2611.08586</link>
+      <description>arXiv:2611.08586v1 Announce Type: new 
+Abstract: Magic, or nonstabilizerness, is the quantum resource behind universal quantum computation. Its applications in high-energy and nuclear physics rely almost exclusively on the stabilizer R\'enyi entropy (SRE), although magic has no unique measure. For two qubits, we compare the SRE with three measures defined through optimizations over stabilizer states: the min- and max-relative entropies of magic and the logarithmic free robustness. We determine the maximal-magic states of all four measures, with exact proofs, and find that they depend on the measure. In the determination of the weak mixing angle from minimal magic in M{\o}ller scattering, the min-relative entropy gives an energy-dependent value that differs from that of the SRE, whereas the max-relative entropy and the logarithmic free robustness give $\sin^2\theta_W=1/4$ at all energies. We trace this difference to the non-analytic structure of the optimization-based measures. Physical conclusions drawn from extremizing magic can thus depend on the measure.</description>
+      <guid isPermaLink="false">oai:arXiv.org:2611.08586v1</guid>
+      <category>quant-ph</category>
+      <category>hep-ex</category>
+      <category>hep-ph</category>
+      <category>hep-th</category>
+      <pubDate>Mon, 09 Nov 2026 00:00:00 -0500</pubDate>
+      <arxiv:announce_type>new</arxiv:announce_type>
+      <dc:rights>http://creativecommons.org/licenses/by-nc-sa/4.0/</dc:rights>
+      <dc:creator>Zhi-Heng Shen, Zhewei Yin, Hao-Lin Zhang</dc:creator>
+    </item>
+    <item>
+      <title>Universality in Quantum Many-Body Spin Ratchets</title>
+      <link>https://arxiv.org/abs/2611.08590</link>
+      <description>arXiv:2611.08590v1 Announce Type: new 
+Abstract: We consider a class of quantum circuits, known as quantum many-body spin ratchets, which act on alternating spin chains with two distinct spin types on even and odd sites. This setup breaks parity symmetry and exhibits chiral transport. It has been shown that the drift velocity in the case of integrable, SU(2)-symmetric quantum spin ratchets is universal, and conjectured that the same holds in the non-integrable case. Here, we prove that this universal drift is exact at all times, requiring only translation invariance and U(1) symmetry. Furthermore, we prove that it is sufficient for the circuit to be translation-invariant on average by deriving the same result in the random case. Finally, we demonstrate that breaking translation invariance immediately results in deviations from this universal prediction.</description>
+      <guid isPermaLink="false">oai:arXiv.org:2611.08590v1</guid>
+      <category>quant-ph</category>
+      <pubDate>Mon, 09 Nov 2026 00:00:00 -0500</pubDate>
+      <arxiv:announce_type>new</arxiv:announce_type>
+      <dc:rights>http://arxiv.org/licenses/nonexclusive-distrib/1.0/</dc:rights>
+      <dc:creator>Andrea Azzali, Marko Ljubotina</dc:creator>
+    </item>
+    <item>
+      <title>Exploring topological signatures of quantum Fisher information scaling in graph states</title>
+      <link>https://arxiv.org/abs/2611.08593</link>
+      <description>arXiv:2611.08593v1 Announce Type: new 
+Abstract: Graph states are a versatile resource for quantum metrology, and their quantum Fisher information (QFI) has a closed-form expression in terms of the underlying graph: it counts pairs of vertices with identical neighborhoods. It remains unclear, however, which global structural properties of a graph determine whether its QFI exceeds the standard quantum limit (SQL). Here we ask whether topological invariants, namely the Betti numbers of the graph's clique complex, capture this behavior, and we address the question numerically with two complementary approaches. First, we randomly add or delete edges in balanced complete multipartite graphs, which combine a QFI beyond the SQL with a single nonvanishing higher Betti number. Edge addition eventually destroys both the metrological advantage and the nontrivial topology. Under edge deletion, by contrast, higher Betti numbers persist well after the QFI has dropped to the SQL. Second, we start from Erd\H{o}s--R\'enyi random graphs, whose QFI does not typically exceed the SQL, and maximize a chosen Betti number with a Monte Carlo search. The search drives the graphs toward near-extremal multipartite structures whose QFI lies well beyond the SQL. Our results show that topological optimization offers a route to metrologically useful graph states, but also that Betti numbers alone do not determine the QFI.</description>
+      <guid isPermaLink="false">oai:arXiv.org:2611.08593v1</guid>
+      <category>quant-ph</category>
+      <pubDate>Mon, 09 Nov 2026 00:00:00 -0500</pubDate>
+      <arxiv:announce_type>new</arxiv:announce_type>
+      <dc:rights>http://arxiv.org/licenses/nonexclusive-distrib/1.0/</dc:rights>
+      <dc:creator>Majid Hassani, Patrick Emonts, Jordi Tura</dc:creator>
+    </item>
+    <item>
+      <title>Harnessing dimensional leakage for continuous-variable randomness certification</title>
+      <link>https://arxiv.org/abs/2611.08607</link>
+      <description>arXiv:2611.08607v1 Announce Type: new 
+Abstract: Semi-device-independent quantum protocols often rely on strict Hilbert-space dimension assumptions that are difficult to satisfy in realistic implementations, particularly with infinite-dimensional optical fields. The almost-qudit framework addresses this issue by quantifying the leakage of quantum states beyond a target subspace. Although such leakage can severely compromise randomness certification for fixed preparation and measurement inputs, we show that averaging over the full input ensemble can mitigate this vulnerability and extend the range of tolerable leakage. This enhanced robustness enables nonzero randomness certification using low-squeezing single-mode Gaussian states and homodyne detection, thus offering an experimentally accessible continuous-variable implementation.</description>
+      <guid isPermaLink="false">oai:arXiv.org:2611.08607v1</guid>
+      <category>quant-ph</category>
+      <pubDate>Mon, 09 Nov 2026 00:00:00 -0500</pubDate>
+      <arxiv:announce_type>new</arxiv:announce_type>
+      <dc:rights>http://creativecommons.org/licenses/by/4.0/</dc:rights>
+      <dc:creator>Mois\'es Alves, Tailan S. Sarubi, Vitor L. Sena, Alexandre B. Tacla, Rafael Chaves</dc:creator>
+    </item>
+    <item>
+      <title>Quantum-enabled measurement of gravitational forces at the milligram scale</title>
+      <link>https://arxiv.org/abs/2611.08619</link>
+      <description>arXiv:2611.08619v1 Announce Type: new 
+Abstract: Gravity is by far the weakest among all known interactions. While it dominates the large-scale structure of the universe, gravitational interactions between small masses in the microscopic range remain underexplored because they are too weak to be experimentally accessible. The interface between gravity, described by general relativity, and quantum mechanics, which describes the microscopic world, is of particular interest. From a theory standpoint, these two major descriptions of nature have not been combined in a satisfactory manner. Technology is gradually becoming mature enough such that probing gravity at the microscopic scale, where quantum mechanics and gravity potentially meet, is becoming accessible. Explorations towards genuine quantum gravity have to be carried out under conditions where the gravitating masses possess non-classical properties, which necessitates ultimate protection against disturbances, such as ultralow temperatures and a small range of motion. Here, we present an experiment at millikelvin temperatures, where the gravity due to a micron-range coherent displacement of an 87 mg source mass imprints on the motion of an oscillating membrane loaded with a 1.3 mg test mass. Vibrations of the membrane are measured in the microwave optomechanical scheme, which is a key setup for investigating non-classical motional states of mechanical oscillators. When considering the combination of total source and test masses, our setup presents two orders of magnitude progress in sensing gravity at the small scale, as well as a 35 dB improvement of gravitational sensitivity at kHz frequencies or above. Our setup offers a plausible approach for studying gravitational interactions between masses prepared in non-classical motional states.</description>
+      <guid isPermaLink="false">oai:arXiv.org:2611.08619v1</guid>
+      <category>quant-ph</category>
+      <category>cond-mat.mes-hall</category>
+      <category>gr-qc</category>
+      <pubDate>Mon, 09 Nov 2026 00:00:00 -0500</pubDate>
+      <arxiv:announce_type>new</arxiv:announce_type>
+      <dc:rights>http://creativecommons.org/licenses/by/4.0/</dc:rights>
+      <dc:creator>Matthew Herbst, Ewa Rej, Joe Depellette, Richa Cutting, Jinhoon Jeong, Mika A. Sillanp\"a\"a</dc:creator>
+    </item>
+    <item>
+      <title>What are local complementations, really?</title>
+      <link>https://arxiv.org/abs/2611.08620</link>
+      <description>arXiv:2611.08620v1 Announce Type: new 
+Abstract: A local complementation at a vertex $v$ of a graph $G$ replaces the induced neighborhood of $v$ with its complement. Local complementations are, at face value, peculiar operations. Yet they famously show up when describing the local Clifford equivalence among graph states, and, because of this, have become a fundamental notion in the study of graph states. Following Bouchet, we show here how local complementations on graphs are more naturally thought of in terms of switchings of (matroid) bases of stabilizer states. Bases and switchings reveal structural properties of stabilizer states that are harder to glean from the graph-theoretic description alone, such as vertex-minors and statistics of local Pauli measurements. Bases also simplify prior proofs about graphs up to local complementations, of which we give several examples. Bases are foundational in the study of (multi)matroids; as such this paper serves as a gentle introduction to the applications of multimatroids to quantum information theory.</description>
+      <guid isPermaLink="false">oai:arXiv.org:2611.08620v1</guid>
+      <category>quant-ph</category>
+      <pubDate>Mon, 09 Nov 2026 00:00:00 -0500</pubDate>
+      <arxiv:announce_type>new</arxiv:announce_type>
+      <dc:rights>http://creativecommons.org/publicdomain/zero/1.0/</dc:rights>
+      <dc:creator>Kenneth Goodenough</dc:creator>
+    </item>
+    <item>
+      <title>pfoqcompiler: Efficient Compilation of Quantum Control in Recursive First-Order Quantum Programs</title>
+      <link>https://arxiv.org/abs/2611.08503</link>
+      <description>arXiv:2611.08503v1 Announce Type: cross 
+Abstract: Recursive quantum control allows for simple and concise descriptions of algorithms. However, a naive circuit compilation sequentializes the different branches of the quantum if-statement and results in an exponential increase in circuit depth. Existing techniques can parallelize these branches, but do so at the cost of an exponential number of ancillary qubits. We present pfoqcompiler, a compiler targeting Qiskit for the first-order quantum programming language FOQ that exploits program structure to merge compatible recursive procedure calls across quantum branches. We introduce weaker syntactically-checkable conditions for well-foundedness, recursive halving, and uniformity, while preserving previously demonstrated complexity characterizations. For weakly well-founded bounded-width programs, the compiler produces polynomial-size circuits; weakly recursively halving programs additionally yield polylogarithmic depth, while weak uniformity removes the asymptotic overhead of branch sequentialization.</description>
+      <guid isPermaLink="false">oai:arXiv.org:2611.08503v1</guid>
+      <category>cs.PL</category>
+      <category>cs.LO</category>
+      <category>quant-ph</category>
+      <pubDate>Mon, 09 Nov 2026 00:00:00 -0500</pubDate>
+      <arxiv:announce_type>cross</arxiv:announce_type>
+      <dc:rights>http://arxiv.org/licenses/nonexclusive-distrib/1.0/</dc:rights>
+      <dc:creator>M\'ario Silva (LMF, QuaCS), Alexandre Guernut (MOCQUA), Marco Lewis (LMF, QuaCS)</dc:creator>
+    </item>
+    <item>
+      <title>Limit cycles in periodically driven open quantum systems</title>
+      <link>https://arxiv.org/abs/1908.03900</link>
+      <description>arXiv:1908.03900v2 Announce Type: replace 
+Abstract: We investigate the long-time behavior of quantum N-level systems that are coupled to a Markovian environment and subject to periodic driving. As our main result, we obtain a general algebraic condition ensuring that all solutions of a periodic quantum master equation with Lindblad form approach a unique limit cycle. Quite intuitively, this criterion requires that the dissipative terms of the master equation connect all subspaces of the system Hilbert space during an arbitrarily small fraction of the cycle time. Our results provide a natural extension of Spohn's algebraic condition for the approach to equilibrium to systems with external driving.</description>
+      <guid isPermaLink="false">oai:arXiv.org:1908.03900v2</guid>
+      <category>quant-ph</category>
+      <category>cond-mat.stat-mech</category>
+      <pubDate>Mon, 09 Nov 2026 00:00:00 -0500</pubDate>
+      <arxiv:announce_type>replace</arxiv:announce_type>
+      <dc:rights>http://arxiv.org/licenses/nonexclusive-distrib/1.0/</dc:rights>
+      <arxiv:DOI>10.1088/1751-8121/ab435a</arxiv:DOI>
+      <dc:creator>Paul Menczel, Kay Brandner</dc:creator>
+    </item>
+  </channel>
+</rss>
