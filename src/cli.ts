@@ -1,19 +1,26 @@
 import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { categoriesFrom } from './arxiv.ts';
-import { latestDigest, openDatabase } from './store.ts';
-import { loadDailyDigest } from './load.ts';
+import { openAppDatabase, openPaperDatabase } from './store.ts';
+import { loadDailyDigest, loadSavedDigest } from './load.ts';
 import { createDigestServer } from './server.ts';
+import { createBgeProvider } from './bge.ts';
+import { loadProfiles } from './profiles.ts';
+import { scoreDigest } from './scoring.ts';
 
-const usage = `Usage: npm run <start|fetch|serve> -- [options]
+const usage = `Usage: npm run <start|fetch|serve|score> -- [options]
   start                  Use today's cached download, or download, then serve
   fetch                  Use today's cached download, or download, and save only
-  serve                  Serve saved data without network access
+  serve                  Serve saved data without network access or inference
+  score                  Score the latest saved digest (never contacts arXiv)
   --categories quant-ph  Comma-separated arXiv categories
-  --db data/digest.sqlite SQLite file
+  --app-db data/app.sqlite       Disposable application state
+  --papers-db data/papers.sqlite Downloaded paper information and source metadata
   --port 3000            Local preview port
   --refresh              Bypass daily download cache (start/fetch only)
+  --profiles profiles    Research profile directory
+  --offline              Use saved digest and cached model assets only
 `;
 
 async function main(): Promise<void> {
@@ -21,34 +28,51 @@ async function main(): Promise<void> {
     allowPositionals: true,
     options: {
       categories: { type: 'string', default: 'quant-ph' },
-      db: { type: 'string', default: 'data/digest.sqlite' },
+      'app-db': { type: 'string', default: 'data/app.sqlite' },
+      'papers-db': { type: 'string', default: 'data/papers.sqlite' },
       port: { type: 'string', default: '3000' },
       refresh: { type: 'boolean', default: false },
+      offline: { type: 'boolean', default: false },
+      profiles: { type: 'string', default: 'profiles' },
       help: { type: 'boolean', short: 'h' },
     },
   });
   if (values.help) { console.log(usage); return; }
   const command = positionals[0];
-  if (positionals.length !== 1 || !['start', 'fetch', 'serve'].includes(command)) throw new Error(usage);
-  if (command === 'serve' && values.refresh) throw new Error('serve is offline; use start or fetch with --refresh');
+  if (positionals.length !== 1 || !['start', 'fetch', 'serve', 'score'].includes(command)) throw new Error(usage);
+  if (values.refresh && (values.offline || command === 'serve' || command === 'score')) {
+    throw new Error('--refresh requires start or fetch without --offline');
+  }
   const categories = categoriesFrom(values.categories);
   const port = Number(values.port);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Port must be between 1 and 65535');
-  mkdirSync(dirname(values.db), { recursive: true });
-  const db = openDatabase(values.db);
+  const appPath = values['app-db'];
+  const papersPath = values['papers-db'];
+  if (resolve(appPath) === resolve(papersPath)) throw new Error('Application and paper databases must be separate files');
+  mkdirSync(dirname(appPath), { recursive: true });
+  mkdirSync(dirname(papersPath), { recursive: true });
+  const papersDb = openPaperDatabase(papersPath);
+  const appDb = openAppDatabase(appPath);
   let digest;
   try {
-    if (command !== 'serve') {
-      digest = await loadDailyDigest(db, categories, { refresh: values.refresh });
+    if ((command === 'start' || command === 'fetch') && !values.offline) {
+      digest = await loadDailyDigest(papersDb, appDb, categories, { refresh: values.refresh });
       console.log(`Saved ${digest.date}: ${digest.papers.length} papers (${digest.categories.join(', ')}).`);
     } else {
-      digest = latestDigest(db, categories);
-      if (!digest) throw new Error('No saved digest for these categories. Run npm start first.');
+      digest = loadSavedDigest(papersDb, appDb, categories);
+    }
+    if (command === 'start' || command === 'score') {
+      if (!digest.semantic) {
+        console.log('Computing local semantic scores (model assets download once if needed)…');
+        digest = await scoreDigest(appDb, digest, loadProfiles(values.profiles), () => createBgeProvider({ offline: values.offline }));
+      }
+      console.log('Using saved semantic scores. Selection and listing order are unchanged.');
     }
   } finally {
-    db.close();
+    appDb.close();
+    papersDb.close();
   }
-  if (command === 'fetch') return;
+  if (command === 'fetch' || command === 'score') return;
   const server = createDigestServer(digest!);
   server.on('error', error => { console.error(error.message); process.exitCode = 1; });
   server.listen(port, '127.0.0.1', () => console.log(`Browse http://127.0.0.1:${port} (announcement ${digest!.date})`));

@@ -1,10 +1,12 @@
 import type { Batch, Paper } from './arxiv.ts';
+import type { SemanticScores } from './scoring.ts';
 
 export interface Digest {
   date: string;
   categories: string[];
   papers: Paper[];
   featuredIds: string[];
+  semantic?: SemanticScores;
 }
 
 /** Stable daily randomness is temporary, pending relevance-based selection. */

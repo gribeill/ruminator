@@ -1,44 +1,45 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { parseFeed } from '../src/arxiv.ts';
-import { downloadDay, loadDailyDigest } from '../src/load.ts';
-import { cachedDownload, latestDigest, openDatabase, saveDigest } from '../src/store.ts';
+import { scoreDigest } from '../src/scoring.ts';
+import { downloadDay, loadDailyDigest, loadSavedDigest } from '../src/load.ts';
+import { archivedBatch, cachedDownload, latestBatches, latestDigest, openAppDatabase, openPaperDatabase, saveDownload } from '../src/store.ts';
 
 const batch = parseFeed(readFileSync(new URL('./fixtures/quant-ph.xml', import.meta.url), 'utf8'), 'quant-ph');
 const now = new Date('2026-11-10T15:00:00Z');
 const log = () => {};
 
 test('daily cache avoids repeated downloads, reuses categories, and permits explicit refresh', async () => {
-  const db = openDatabase(':memory:');
+  const papers = openPaperDatabase(':memory:');
+  const app = openAppDatabase(':memory:');
   const calls: string[] = [];
   const download = async (category: string) => { calls.push(category); return { ...batch, category }; };
   try {
-    const original = await loadDailyDigest(db, ['quant-ph'], { now, download, log });
+    const original = await loadDailyDigest(papers, app, ['quant-ph'], { now, download, log });
     assert.equal(calls.length, 1);
-    assert.deepEqual(await loadDailyDigest(db, ['quant-ph'], { now, download, log }), original);
+    assert.deepEqual(await loadDailyDigest(papers, app, ['quant-ph'], { now, download, log }), original);
     assert.equal(calls.length, 1);
-    // UTC midnight alone doesn't invalidate a US Eastern daily cache.
-    await loadDailyDigest(db, ['quant-ph'], { now: new Date('2026-11-11T02:00:00Z'), download, log });
-    assert.equal(calls.length, 1);
+    await loadDailyDigest(papers, app, ['quant-ph'], { now: new Date('2026-11-11T02:00:00Z'), download, log });
+    assert.equal(calls.length, 1); // UTC midnight alone doesn't expire the Eastern cache.
     const tomorrow = new Date('2026-11-11T05:00:00Z');
-    await loadDailyDigest(db, ['quant-ph'], { now: tomorrow, download, log });
-    assert.equal(calls.length, 2); // Same announcement date, but a new download day.
-    const combined = await loadDailyDigest(db, ['quant-ph', 'cs.ET'], { now: tomorrow, download, log });
+    await loadDailyDigest(papers, app, ['quant-ph'], { now: tomorrow, download, log });
+    assert.equal(calls.length, 2);
+    const combined = await loadDailyDigest(papers, app, ['quant-ph', 'cs.ET'], { now: tomorrow, download, log });
     assert.deepEqual(calls, ['quant-ph', 'quant-ph', 'cs.ET']);
     assert.deepEqual(combined.categories, ['cs.ET', 'quant-ph']);
-    const refreshed = await loadDailyDigest(db, ['quant-ph'], {
+    const refreshed = await loadDailyDigest(papers, app, ['quant-ph'], {
       now: tomorrow, refresh: true, log,
       download: async category => { calls.push(category); return { ...batch, papers: [] }; },
     });
     assert.equal(calls.length, 4);
-    assert.deepEqual(refreshed, original); // Refresh never rewrites an existing digest.
-    assert.equal(cachedDownload(db, 'quant-ph')?.batch.papers.length, 0);
-    assert.deepEqual(await loadDailyDigest(db, ['quant-ph'], { now: tomorrow, download, log }), original);
+    assert.deepEqual(refreshed, original);
+    assert.equal(cachedDownload(papers, 'quant-ph')?.batch.papers.length, 0);
+    assert.equal(archivedBatch(papers, 'quant-ph', batch.date)?.papers.length, batch.papers.length);
+    assert.deepEqual(await loadDailyDigest(papers, app, ['quant-ph'], { now: tomorrow, download, log }), original);
     assert.equal(calls.length, 4);
-  } finally { db.close(); }
+  } finally { app.close(); papers.close(); }
 });
 
 test('download day handles Eastern DST boundaries', () => {
@@ -49,56 +50,89 @@ test('download day handles Eastern DST boundaries', () => {
 });
 
 test('failed downloads do not count as checked or publish partial digests', async () => {
-  const db = openDatabase(':memory:');
+  const papers = openPaperDatabase(':memory:');
+  const app = openAppDatabase(':memory:');
   const calls: string[] = [];
   try {
-    await assert.rejects(loadDailyDigest(db, ['quant-ph', 'cs.ET'], {
+    await assert.rejects(loadDailyDigest(papers, app, ['quant-ph', 'cs.ET'], {
       now, log, download: async category => {
         calls.push(category);
         if (category === 'cs.ET') throw new Error('Temporary outage');
         return batch;
       },
     }), /Temporary outage/);
-    assert.equal(cachedDownload(db, 'cs.ET'), undefined);
-    assert.equal(latestDigest(db, ['quant-ph', 'cs.ET']), undefined);
-    await loadDailyDigest(db, ['quant-ph', 'cs.ET'], {
+    assert.equal(cachedDownload(papers, 'cs.ET'), undefined);
+    assert.equal(latestDigest(app, ['quant-ph', 'cs.ET']), undefined);
+    await loadDailyDigest(papers, app, ['quant-ph', 'cs.ET'], {
       now, log, download: async category => { calls.push(category); return { ...batch, category }; },
     });
     assert.deepEqual(calls, ['quant-ph', 'cs.ET', 'cs.ET']);
-  } finally { db.close(); }
+  } finally { app.close(); papers.close(); }
 });
 
 test('an empty downloaded batch is cached too', async () => {
-  const db = openDatabase(':memory:');
+  const papers = openPaperDatabase(':memory:');
+  const app = openAppDatabase(':memory:');
   let calls = 0;
   const download = async () => { calls++; return { ...batch, papers: [] }; };
   try {
-    await loadDailyDigest(db, ['quant-ph'], { now, download, log });
-    const digest = await loadDailyDigest(db, ['quant-ph'], { now, download, log });
+    await loadDailyDigest(papers, app, ['quant-ph'], { now, download, log });
+    const digest = await loadDailyDigest(papers, app, ['quant-ph'], { now, download, log });
     assert.equal(calls, 1);
     assert.deepEqual(digest.papers, []);
-  } finally { db.close(); }
+  } finally { app.close(); papers.close(); }
 });
 
-test('existing schema upgrades and today\'s previously saved batch needs no new download', async () => {
-  // Keep temporary files within the repository, not the operating system's /tmp.
-  mkdirSync('data', { recursive: true });
-  const directory = mkdtempSync('data/cache-test-');
-  const filename = join(directory, 'digest.sqlite');
-  const old = new DatabaseSync(filename);
-  old.exec(readFileSync(new URL('../migrations/001_initial.sql', import.meta.url), 'utf8'));
-  const original = saveDigest(old, [batch]);
-  old.prepare('UPDATE batches SET fetched_at = ?').run('2026-11-10 15:00:00');
-  old.close();
-  const db = openDatabase(filename);
+test('offline reconstruction selects the latest batch shared by every requested category', () => {
+  const papers = openPaperDatabase(':memory:');
+  const app = openAppDatabase(':memory:');
+  const checkedAt = now.toISOString();
   try {
-    assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 2);
-    const digest = await loadDailyDigest(db, ['quant-ph'], {
-      now, log, download: async () => { throw new Error('Must use saved batch'); },
-    });
-    assert.deepEqual(digest, original);
+    assert.throws(() => loadSavedDigest(papers, app, ['quant-ph']), /No saved announcement/);
+    saveDownload(papers, { batch, checkedAt });
+    saveDownload(papers, { batch: { ...batch, category: 'cs.ET' }, checkedAt });
+    saveDownload(papers, { batch: { ...batch, date: '2026-11-10' }, checkedAt });
+    assert.equal(latestBatches(papers, ['quant-ph'])[0].date, '2026-11-10');
+    const common = loadSavedDigest(papers, app, ['quant-ph', 'cs.ET']);
+    assert.equal(common.date, batch.date);
+    assert.deepEqual(common.categories, ['cs.ET', 'quant-ph']);
+    assert.deepEqual(latestBatches(papers, ['math.OC']), []);
+    assert.deepEqual(latestBatches(papers, []), []);
+  } finally { app.close(); papers.close(); }
+});
+
+test('recreating the application DB preserves source data and rebuilds a digest without downloading', async () => {
+  mkdirSync('data', { recursive: true });
+  const directory = mkdtempSync('data/storage-test-');
+  const papersPath = join(directory, 'papers.sqlite');
+  const appPath = join(directory, 'app.sqlite');
+  let papers = openPaperDatabase(papersPath);
+  let app = openAppDatabase(appPath);
+  try {
+    const original = await loadDailyDigest(papers, app, ['quant-ph'], { now, log, download: async () => batch });
+    await scoreDigest(app, original, [{ id: 'test', title: 'Test', subjects: ['Qubits'] }], async () => ({
+      fingerprint: 'test', dimensions: 2, embed: async () => [1, 0],
+    }), log);
+    assert.ok(latestDigest(app, ['quant-ph'])?.semantic);
+    assert.deepEqual(papers.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all().map(r => r.name), ['batches', 'feed_downloads']);
+    assert.deepEqual(app.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all().map(r => r.name), ['digests', 'embeddings', 'semantic_scores']);
+    app.close();
+    papers.close();
+    const sourceBytes = readFileSync(papersPath);
+    rmSync(appPath);
+    papers = openPaperDatabase(papersPath);
+    app = openAppDatabase(appPath);
+    assert.equal(latestDigest(app, ['quant-ph']), undefined);
+    assert.equal(app.prepare('SELECT COUNT(*) AS n FROM embeddings').get()?.n, 0);
+    assert.equal(app.prepare('SELECT COUNT(*) AS n FROM semantic_scores').get()?.n, 0);
+    assert.deepEqual(loadSavedDigest(papers, app, ['quant-ph']), original);
+    assert.deepEqual(await loadDailyDigest(papers, app, ['quant-ph'], {
+      now, log, download: async () => { throw new Error('Must reuse the independent paper cache'); },
+    }), original);
+    assert.equal(cachedDownload(papers, 'quant-ph')?.checkedAt, now.toISOString());
+    assert.deepEqual(readFileSync(papersPath), sourceBytes);
   } finally {
-    db.close();
+    app.close(); papers.close();
     rmSync(directory, { recursive: true, force: true });
   }
 });

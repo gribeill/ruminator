@@ -11,9 +11,12 @@
     "fetch": "node src/cli.ts fetch",
     "serve": "node src/cli.ts serve",
     "test": "node --test test/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "score": "node src/cli.ts score",
+    "test:model": "node --test test/model.integration.ts"
   },
   "dependencies": {
+    "@huggingface/transformers": "4.3.2",
     "fast-xml-parser": "^5.0.0",
     "katex": "^0.19.1"
   },

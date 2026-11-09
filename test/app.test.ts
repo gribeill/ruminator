@@ -7,7 +7,7 @@ import { categoriesFrom, parseFeed, pdfUrl } from '../src/arxiv.ts';
 import { createDigest } from '../src/digest.ts';
 import { renderDigest } from '../src/render.ts';
 import { createDigestServer } from '../src/server.ts';
-import { latestDigest, openDatabase, saveDigest } from '../src/store.ts';
+import { latestDigest, openAppDatabase, saveDigest } from '../src/store.ts';
 
 const xml = readFileSync(new URL('./fixtures/quant-ph.xml', import.meta.url), 'utf8');
 const batch = parseFeed(xml, 'quant-ph');
@@ -64,27 +64,27 @@ test('multiple categories deduplicate cross-listings and reject mixed announceme
   assert.throws(() => createDigest([batch, { ...other, date: '2026-11-10' }]), /different announcement dates/);
 });
 
-test('real SQLite: migrations, idempotent ingestion, immutable snapshots, and empty batches', () => {
-  const db = openDatabase(':memory:');
+test('real SQLite: current schema, immutable digest snapshots, and empty batches', () => {
+  const db = openAppDatabase(':memory:');
   try {
     assert.equal(latestDigest(db, ['quant-ph']), undefined);
     const original = saveDigest(db, [batch]);
     assert.deepEqual(saveDigest(db, [batch]), original);
     assert.deepEqual(saveDigest(db, [{ ...batch, papers: [] }]), original);
     assert.deepEqual(latestDigest(db, ['quant-ph']), original);
-    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM batches').get()?.count, 1);
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM digests').get()?.count, 1);
     const empty = saveDigest(db, [{ ...batch, date: '2026-11-10', papers: [] }]);
     assert.deepEqual(latestDigest(db, ['quant-ph']), empty);
     assert.equal(empty.papers.length, 0);
     assert.match(renderDigest(empty), /No new papers/);
-    const combined = saveDigest(db, [{ ...batch, papers: [] }, { ...batch, category: 'cs.ET', papers: [] }]);
+    const combined = saveDigest(db, [batch, { ...batch, category: 'cs.ET', papers: [] }]);
     assert.deepEqual(latestDigest(db, ['quant-ph', 'cs.ET']), combined);
     assert.equal(combined.papers.length, original.papers.length);
+    const count = db.prepare('SELECT COUNT(*) AS count FROM digests').get()?.count;
     assert.throws(() => saveDigest(db, [
       { ...batch, category: 'math.OC', date: '2026-11-11' }, batch,
     ]), /different announcement dates/);
-    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM batches WHERE category = ?').get('math.OC')?.count, 0);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM digests').get()?.count, count);
   } finally { db.close(); }
 });
 
@@ -105,7 +105,7 @@ test('HTML expands only remaining titles, links every PDF, and escapes untrusted
 });
 
 test('HTTP preview serves the same saved page on refresh, with no generation', async () => {
-  const db = openDatabase(':memory:');
+  const db = openAppDatabase(':memory:');
   const digest = saveDigest(db, [batch]);
   db.close();
   const server = createDigestServer(digest);

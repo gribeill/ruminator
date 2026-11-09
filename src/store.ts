@@ -2,20 +2,26 @@ import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import type { Batch } from './arxiv.ts';
 import { createDigest, type Digest } from './digest.ts';
+import type { SemanticScores } from './scoring.ts';
 
-/** Node-specific boundary; core generation/rendering do not depend on this driver. */
-export function openDatabase(path: string): DatabaseSync {
+function openDatabase(path: string, schema: 'app' | 'papers'): DatabaseSync {
   const db = new DatabaseSync(path);
-  const version = db.prepare('PRAGMA user_version').get() as { user_version: number };
-  const migrations = ['001_initial.sql', '002_download_cache.sql'];
-  if (version.user_version > migrations.length) {
+  try {
+    // Initialize the current schema only. Development databases are not upgraded.
+    db.exec(readFileSync(new URL(`../schema/${schema}.sql`, import.meta.url), 'utf8'));
+    return db;
+  } catch (error) {
     db.close();
-    throw new Error(`Unsupported database schema: ${version.user_version}`);
+    throw error;
   }
-  for (const file of migrations.slice(version.user_version)) {
-    db.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url), 'utf8'));
-  }
-  return db;
+}
+
+export function openAppDatabase(path: string): DatabaseSync {
+  return openDatabase(path, 'app');
+}
+
+export function openPaperDatabase(path: string): DatabaseSync {
+  return openDatabase(path, 'papers');
 }
 
 interface DigestRow {
@@ -25,7 +31,7 @@ interface DigestRow {
   featured_ids_json: string;
 }
 
-function decode(row: DigestRow): Digest {
+function decodeDigest(row: DigestRow): Digest {
   return {
     date: row.announcement_date, categories: JSON.parse(row.categories_json),
     papers: JSON.parse(row.papers_json), featuredIds: JSON.parse(row.featured_ids_json),
@@ -35,7 +41,38 @@ function decode(row: DigestRow): Digest {
 export function latestDigest(db: DatabaseSync, categories: string[]): Digest | undefined {
   const row = db.prepare(`SELECT * FROM digests WHERE categories_json = ?
     ORDER BY announcement_date DESC LIMIT 1`).get(JSON.stringify([...categories].sort())) as DigestRow | undefined;
-  return row ? decode(row) : undefined;
+  return row ? withScores(db, decodeDigest(row)) : undefined;
+}
+
+export function readSemanticScores(db: DatabaseSync, digest: Digest): SemanticScores | undefined {
+  const row = db.prepare('SELECT scores_json FROM semantic_scores WHERE announcement_date = ? AND categories_json = ?')
+    .get(digest.date, JSON.stringify([...digest.categories].sort())) as { scores_json: string } | undefined;
+  return row ? JSON.parse(row.scores_json) : undefined;
+}
+
+function withScores(db: DatabaseSync, digest: Digest): Digest {
+  const semantic = readSemanticScores(db, digest);
+  return semantic ? { ...digest, semantic } : digest;
+}
+
+export function saveSemanticScores(db: DatabaseSync, digest: Digest, scores: SemanticScores): SemanticScores {
+  db.prepare(`INSERT INTO semantic_scores (announcement_date, categories_json, scores_json) VALUES (?, ?, ?)
+    ON CONFLICT DO NOTHING`).run(digest.date, JSON.stringify([...digest.categories].sort()), JSON.stringify(scores));
+  return readSemanticScores(db, digest)!;
+}
+
+/** Save an immutable digest; canonical source archives stay in the paper DB. */
+export function saveDigest(db: DatabaseSync, batches: Batch[]): Digest {
+  const digest = createDigest(batches);
+  const categories = JSON.stringify(digest.categories);
+  db.prepare(`INSERT INTO digests
+    (announcement_date, categories_json, papers_json, featured_ids_json) VALUES (?, ?, ?, ?)
+    ON CONFLICT (announcement_date, categories_json) DO NOTHING`).run(
+    digest.date, categories, JSON.stringify(digest.papers), JSON.stringify(digest.featuredIds),
+  );
+  const row = db.prepare('SELECT * FROM digests WHERE announcement_date = ? AND categories_json = ?')
+    .get(digest.date, categories) as unknown as DigestRow;
+  return withScores(db, decodeDigest(row));
 }
 
 export interface Download {
@@ -43,55 +80,42 @@ export interface Download {
   checkedAt: string;
 }
 
-/** Old batch snapshots also count as downloads when upgrading an existing DB. */
 export function cachedDownload(db: DatabaseSync, category: string): Download | undefined {
-  const cached = db.prepare('SELECT checked_at, batch_json FROM feed_downloads WHERE category = ?')
+  const row = db.prepare('SELECT checked_at, batch_json FROM feed_downloads WHERE category = ?')
     .get(category) as { checked_at: string; batch_json: string } | undefined;
-  if (cached) return { batch: JSON.parse(cached.batch_json), checkedAt: cached.checked_at };
-  const old = db.prepare('SELECT * FROM batches WHERE category = ? ORDER BY fetched_at DESC LIMIT 1')
-    .get(category) as { announcement_date: string; source_url: string; papers_json: string; fetched_at: string } | undefined;
-  if (!old) return undefined;
-  return {
-    batch: { category, date: old.announcement_date, sourceUrl: old.source_url, papers: JSON.parse(old.papers_json) },
-    checkedAt: old.fetched_at.replace(' ', 'T') + 'Z',
-  };
+  return row ? { batch: JSON.parse(row.batch_json), checkedAt: row.checked_at } : undefined;
 }
 
-export function saveDownload(db: DatabaseSync, download: Download): void {
-  db.prepare(`INSERT INTO feed_downloads (category, checked_at, batch_json) VALUES (?, ?, ?)
-    ON CONFLICT (category) DO UPDATE SET checked_at = excluded.checked_at, batch_json = excluded.batch_json`)
-    .run(download.batch.category, download.checkedAt, JSON.stringify(download.batch));
-}
-
-/** Commit a whole snapshot; reruns never replace an already published digest. */
-export function saveDigest(db: DatabaseSync, batches: Batch[]): Digest {
+/** Archive the first source snapshot and update freshness atomically. */
+export function saveDownload(db: DatabaseSync, { batch, checkedAt }: Download): void {
   db.exec('BEGIN');
   try {
-    const saveBatch = db.prepare(`INSERT INTO batches
-      (category, announcement_date, source_url, papers_json) VALUES (?, ?, ?, ?)
-      ON CONFLICT (category, announcement_date) DO NOTHING`);
-    for (const batch of batches) {
-      saveBatch.run(batch.category, batch.date, batch.sourceUrl, JSON.stringify(batch.papers));
-    }
-    // Reuse the first downloaded source snapshot for new category combinations too.
-    const savedBatches = batches.map(batch => {
-      const row = db.prepare('SELECT papers_json FROM batches WHERE category = ? AND announcement_date = ?')
-        .get(batch.category, batch.date) as { papers_json: string };
-      return { ...batch, papers: JSON.parse(row.papers_json) };
-    });
-    const digest = createDigest(savedBatches);
-    const categories = JSON.stringify(digest.categories);
-    db.prepare(`INSERT INTO digests
-      (announcement_date, categories_json, papers_json, featured_ids_json) VALUES (?, ?, ?, ?)
-      ON CONFLICT (announcement_date, categories_json) DO NOTHING`).run(
-      digest.date, categories, JSON.stringify(digest.papers), JSON.stringify(digest.featuredIds),
-    );
-    const row = db.prepare('SELECT * FROM digests WHERE announcement_date = ? AND categories_json = ?')
-      .get(digest.date, categories) as unknown as DigestRow;
+    db.prepare(`INSERT INTO batches (category, announcement_date, source_url, papers_json, fetched_at)
+      VALUES (?, ?, ?, ?, ?) ON CONFLICT (category, announcement_date) DO NOTHING`)
+      .run(batch.category, batch.date, batch.sourceUrl, JSON.stringify(batch.papers), checkedAt);
+    db.prepare(`INSERT INTO feed_downloads (category, checked_at, batch_json) VALUES (?, ?, ?)
+      ON CONFLICT (category) DO UPDATE SET checked_at = excluded.checked_at, batch_json = excluded.batch_json`)
+      .run(batch.category, checkedAt, JSON.stringify(batch));
     db.exec('COMMIT');
-    return decode(row);
   } catch (error) {
     db.exec('ROLLBACK');
     throw error;
   }
+}
+
+export function archivedBatch(db: DatabaseSync, category: string, date: string): Batch | undefined {
+  const row = db.prepare('SELECT source_url, papers_json FROM batches WHERE category = ? AND announcement_date = ?')
+    .get(category, date) as { source_url: string; papers_json: string } | undefined;
+  return row ? { category, date, sourceUrl: row.source_url, papers: JSON.parse(row.papers_json) } : undefined;
+}
+
+/** Rebuild application state from the latest announcement shared by all categories. */
+export function latestBatches(db: DatabaseSync, categories: string[]): Batch[] {
+  const unique = [...new Set(categories)].sort();
+  if (!unique.length) return [];
+  const placeholders = unique.map(() => '?').join(',');
+  const row = db.prepare(`SELECT announcement_date FROM batches WHERE category IN (${placeholders})
+    GROUP BY announcement_date HAVING COUNT(*) = ? ORDER BY announcement_date DESC LIMIT 1`)
+    .get(...unique, unique.length) as { announcement_date: string } | undefined;
+  return row ? unique.map(category => archivedBatch(db, category, row.announcement_date)!) : [];
 }
