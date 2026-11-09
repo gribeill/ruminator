@@ -19,7 +19,7 @@ const usage = `Usage: npm run <start|fetch|serve|score> -- [options]
   --papers-db data/papers.sqlite Downloaded paper information and source metadata
   --port 3000            Local preview port
   --refresh              Bypass daily download cache (start/fetch only)
-  --profiles profiles    Research profile directory
+  --profiles interests.md Research-interest Markdown file
   --offline              Use saved digest and cached model assets only
 `;
 
@@ -33,7 +33,7 @@ async function main(): Promise<void> {
       port: { type: 'string', default: '3000' },
       refresh: { type: 'boolean', default: false },
       offline: { type: 'boolean', default: false },
-      profiles: { type: 'string', default: 'profiles' },
+      profiles: { type: 'string', default: 'interests.md' },
       help: { type: 'boolean', short: 'h' },
     },
   });
@@ -62,11 +62,11 @@ async function main(): Promise<void> {
       digest = loadSavedDigest(papersDb, appDb, categories);
     }
     if (command === 'start' || command === 'score') {
-      if (!digest.semantic) {
-        console.log('Computing local semantic scores (model assets download once if needed)…');
+      if (!digest.ranking) {
+        console.log('Computing local scores and diversity-aware ranking (cached embeddings are reused)…');
         digest = await scoreDigest(appDb, digest, loadProfiles(values.profiles), () => createBgeProvider({ offline: values.offline }));
       }
-      console.log('Using saved semantic scores. Selection and listing order are unchanged.');
+      console.log('Using saved relevance scores, featured selections, and MMR listing order.');
     }
   } finally {
     appDb.close();

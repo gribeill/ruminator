@@ -1,3 +1,11 @@
+-- Explicit author metadata can enrich archived batches without rewriting them.
+CREATE TABLE IF NOT EXISTS paper_authors (
+  arxiv_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  names_json TEXT NOT NULL,
+  PRIMARY KEY (arxiv_id, version)
+);
+
 -- Source data lives separately from disposable application state.
 CREATE TABLE IF NOT EXISTS batches (
   category TEXT NOT NULL,

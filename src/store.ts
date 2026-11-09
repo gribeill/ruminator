@@ -3,6 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import type { Batch } from './arxiv.ts';
 import { createDigest, type Digest } from './digest.ts';
 import type { SemanticScores } from './scoring.ts';
+import type { Ranking } from './ranking.ts';
 
 function openDatabase(path: string, schema: 'app' | 'papers'): DatabaseSync {
   const db = new DatabaseSync(path);
@@ -52,7 +53,8 @@ export function readSemanticScores(db: DatabaseSync, digest: Digest): SemanticSc
 
 function withScores(db: DatabaseSync, digest: Digest): Digest {
   const semantic = readSemanticScores(db, digest);
-  return semantic ? { ...digest, semantic } : digest;
+  const ranking = readRanking(db, digest);
+  return { ...digest, ...(semantic ? { semantic } : {}), ...(ranking ? { ranking } : {}) };
 }
 
 export function saveSemanticScores(db: DatabaseSync, digest: Digest, scores: SemanticScores): SemanticScores {
@@ -73,6 +75,18 @@ export function saveDigest(db: DatabaseSync, batches: Batch[]): Digest {
   const row = db.prepare('SELECT * FROM digests WHERE announcement_date = ? AND categories_json = ?')
     .get(digest.date, categories) as unknown as DigestRow;
   return withScores(db, decodeDigest(row));
+}
+
+export function readRanking(db: DatabaseSync, digest: Digest): Ranking | undefined {
+  const row = db.prepare('SELECT ranking_json FROM rankings WHERE announcement_date = ? AND categories_json = ?')
+    .get(digest.date, JSON.stringify([...digest.categories].sort())) as { ranking_json: string } | undefined;
+  return row ? JSON.parse(row.ranking_json) : undefined;
+}
+
+export function saveRanking(db: DatabaseSync, digest: Digest, ranking: Ranking): Ranking {
+  db.prepare(`INSERT INTO rankings (announcement_date, categories_json, ranking_json) VALUES (?, ?, ?)
+    ON CONFLICT DO NOTHING`).run(digest.date, JSON.stringify([...digest.categories].sort()), JSON.stringify(ranking));
+  return readRanking(db, digest)!;
 }
 
 export interface Download {
@@ -96,6 +110,11 @@ export function saveDownload(db: DatabaseSync, { batch, checkedAt }: Download): 
     db.prepare(`INSERT INTO feed_downloads (category, checked_at, batch_json) VALUES (?, ?, ?)
       ON CONFLICT (category) DO UPDATE SET checked_at = excluded.checked_at, batch_json = excluded.batch_json`)
       .run(batch.category, checkedAt, JSON.stringify(batch));
+    const authors = db.prepare(`INSERT INTO paper_authors (arxiv_id, version, names_json) VALUES (?, ?, ?)
+      ON CONFLICT (arxiv_id, version) DO UPDATE SET names_json = excluded.names_json`);
+    for (const paper of batch.papers) {
+      if (paper.authors?.length) authors.run(paper.id, paper.version, JSON.stringify(paper.authors));
+    }
     db.exec('COMMIT');
   } catch (error) {
     db.exec('ROLLBACK');
@@ -106,7 +125,14 @@ export function saveDownload(db: DatabaseSync, { batch, checkedAt }: Download): 
 export function archivedBatch(db: DatabaseSync, category: string, date: string): Batch | undefined {
   const row = db.prepare('SELECT source_url, papers_json FROM batches WHERE category = ? AND announcement_date = ?')
     .get(category, date) as { source_url: string; papers_json: string } | undefined;
-  return row ? { category, date, sourceUrl: row.source_url, papers: JSON.parse(row.papers_json) } : undefined;
+  if (!row) return undefined;
+  const authors = db.prepare('SELECT names_json FROM paper_authors WHERE arxiv_id = ? AND version = ?');
+  const papers: Batch['papers'] = JSON.parse(row.papers_json);
+  for (const paper of papers) {
+    const names = authors.get(paper.id, paper.version) as { names_json: string } | undefined;
+    if (names) paper.authors = JSON.parse(names.names_json);
+  }
+  return { category, date, sourceUrl: row.source_url, papers };
 }
 
 /** Rebuild application state from the latest announcement shared by all categories. */

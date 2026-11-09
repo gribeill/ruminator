@@ -3,7 +3,8 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { Digest } from './digest.ts';
 import { normalize, type EmbeddingInput, type EmbeddingProvider } from './embeddings.ts';
 import type { Profile } from './profiles.ts';
-import { readSemanticScores, saveSemanticScores } from './store.ts';
+import { readRanking, readSemanticScores, saveRanking, saveSemanticScores } from './store.ts';
+import { rankPapers } from './ranking.ts';
 
 export interface PaperScore {
   score: number;
@@ -42,28 +43,43 @@ export async function scoreDigest(
   log: (message: string) => void = console.log,
 ): Promise<Digest> {
   const existing = readSemanticScores(db, digest);
-  if (existing) return { ...digest, semantic: existing };
-  if (!profiles.length) throw new Error('At least one research profile is required');
+  const ranking = readRanking(db, digest);
+  if (existing && ranking) return { ...digest, semantic: existing, ranking };
+  // Freeze semantic inputs independently of the explicit lexical vocabulary.
+  const embeddingProfiles = existing?.profiles ?? profiles;
+  if (!embeddingProfiles.length) throw new Error('At least one research profile is required');
   const provider = await createProvider();
   try {
+    if (existing && existing.fingerprint !== provider.fingerprint) {
+      throw new Error('Embedding model changed; reset the application DB before ranking');
+    }
     const queries: number[][] = [];
-    for (const profile of profiles) {
-      queries.push(await cachedEmbedding(db, provider, { kind: 'profile', title: profile.title, text: profile.subjects.join('\n') }));
+    if (!existing) {
+      for (const profile of embeddingProfiles) {
+        queries.push(await cachedEmbedding(db, provider, { kind: 'profile', title: profile.title, text: profile.subjects.join('\n') }));
+      }
     }
     const papers: Record<string, PaperScore> = {};
+    const vectors: Record<string, number[]> = {};
     for (const [index, paper] of digest.papers.entries()) {
       log(`Scoring ${index + 1}/${digest.papers.length}: ${paper.id}`);
       const vector = await cachedEmbedding(db, provider, { kind: 'paper', title: paper.title, text: paper.abstract });
+      vectors[paper.id] = vector;
+      if (existing) continue;
       const similarities = queries.map(query => Math.max(-1, Math.min(1, query.reduce((sum, v, i) => sum + v * vector[i], 0))));
       const best = similarities.indexOf(Math.max(...similarities));
       papers[paper.id] = {
-        score: visibleScore(similarities[best]), cosine: similarities[best], profileId: profiles[best].id,
-        similarities: Object.fromEntries(profiles.map((profile, i) => [profile.id, similarities[i]])),
+        score: visibleScore(similarities[best]), cosine: similarities[best], profileId: embeddingProfiles[best].id,
+        similarities: Object.fromEntries(embeddingProfiles.map((profile, i) => [profile.id, similarities[i]])),
       };
     }
-    const scores: SemanticScores = {
-      fingerprint: provider.fingerprint, normalization: 'cosine-affine-v1', profiles, papers,
-    };
-    return { ...digest, semantic: saveSemanticScores(db, digest, scores) };
+    const semantic = existing ?? saveSemanticScores(db, digest, {
+      fingerprint: provider.fingerprint, normalization: 'cosine-affine-v1', profiles: embeddingProfiles, papers,
+    });
+    const keywordProfiles = semantic.profiles.map(profile => ({
+      ...profile, keywords: profiles.find(p => p.id === profile.id)?.keywords ?? [],
+    }));
+    const ranked = saveRanking(db, digest, rankPapers(digest, semantic, vectors, keywordProfiles));
+    return { ...digest, semantic, ranking: ranked };
   } finally { await provider.dispose?.(); }
 }

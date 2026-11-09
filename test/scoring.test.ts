@@ -4,9 +4,8 @@ import { test } from 'node:test';
 import { parseFeed } from '../src/arxiv.ts';
 import { createBgeProvider } from '../src/bge.ts';
 import { averageVectors, normalize, splitChunks, type EmbeddingProvider, type Tokenizer } from '../src/embeddings.ts';
-import { loadProfiles, parseProfile } from '../src/profiles.ts';
 import { cachedEmbedding, scoreDigest, visibleScore } from '../src/scoring.ts';
-import { latestDigest, openAppDatabase, readSemanticScores, saveDigest } from '../src/store.ts';
+import { latestDigest, openAppDatabase, readSemanticScores, saveDigest, saveSemanticScores } from '../src/store.ts';
 import { renderDigest } from '../src/render.ts';
 
 const batch = parseFeed(readFileSync(new URL('./fixtures/quant-ph.xml', import.meta.url), 'utf8'), 'quant-ph');
@@ -15,26 +14,6 @@ const profiles = [
   { id: 'sensing', title: 'Sensing', subjects: ['Spin defects'] },
 ];
 const log = () => {};
-
-test('profiles only include the heading and explicit positive subjects', () => {
-  const profile = parseProfile(`# Hardware
-<!-- hidden comment -->
-## Subjects
-- Gates
-* Couplers
-<!-- - Not a subject -->
-## Positive examples
-- Example paper
-## Deprioritize
-- Ignore this
-## Negative examples
-- Bad match
-`, 'hardware');
-  assert.deepEqual(profile, { id: 'hardware', title: 'Hardware', subjects: ['Gates', 'Couplers'] });
-  assert.deepEqual(parseProfile('# Test\r\n\r\n## Subjects\r\n- Qubits\r\n', 'test').subjects, ['Qubits']);
-  assert.throws(() => parseProfile('# Empty\n## Subjects\n<!-- placeholder -->', 'empty'), /needs/);
-  assert.equal(loadProfiles().length, 6);
-});
 
 function wordTokenizer(): Tokenizer {
   const words: string[] = [];
@@ -124,7 +103,12 @@ test('scores use the strongest profile, render on every entry, and remain fixed 
     assert.deepEqual(scored.featuredIds, digest.featuredIds);
     assert.deepEqual(scored.papers, digest.papers);
     const html = renderDigest(scored);
-    assert.equal((html.match(/>0.900<\/small>/g) ?? []).length, batch.papers.length);
+    assert.equal((html.match(/class="score" title=/g) ?? []).length, batch.papers.length);
+    for (const paper of batch.papers) {
+      assert.ok(html.includes(`>${scored.ranking!.scores[paper.id].total.toFixed(3)}</small>`));
+    }
+    assert.equal(scored.ranking!.featured.length, 6);
+    assert.match(html, /Keywords: .*Feedback: 0.500/);
     assert.match(html, /Closest profile: Sensing/);
     assert.deepEqual(latestDigest(db, ['quant-ph']), scored);
     const again = await scoreDigest(db, digest, [{ ...profiles[0], subjects: ['Changed'] }], async () => {

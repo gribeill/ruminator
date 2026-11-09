@@ -2,10 +2,11 @@
 
 A local, minimal arXiv browser. Downloads the latest `quant-ph` announcement feed, saves it in SQLite, and displays:
 
-- Six randomly selected papers with titles, abstracts, and PDF links.
-- Every remaining paper as an expandable title revealing its abstract and PDF link.
+- Six featured papers: four relevance picks, one adjacent topic, and one weighted-random wildcard, with titles, abstracts, and PDF links.
+- Every remaining paper in a diversity-aware order, as an expandable title revealing its abstract and PDF link.
+- Compact authors (up to four; first two … last two for longer lists), with all names in a tooltip.
 
-The random selection is fixed for each saved announcement batch. Math in titles and abstracts is rendered with KaTeX, including `$…$`, `$$…$$`, `\(…\)`, and `\[…\]`. Styles and fonts are served locally, with no CDN or browser JavaScript. Unsupported/malformed math stays visible as escaped source text. Every scored paper shows a numeric semantic relevance score. The six picks and listing order are still unchanged; combined ranking, LLM summaries, and voting are not implemented yet.
+Selections and display order are fixed once ranking is saved for an announcement batch. Math in titles and abstracts is rendered with KaTeX, including `$…$`, `$$…$$`, `\(…\)`, and `\[…\]`. Styles and fonts are served locally, with no CDN or browser JavaScript. Unsupported/malformed math stays visible as escaped source text. Every ranked paper shows a combined relevance score with a component breakdown in its tooltip. LLM summaries and voting are not implemented yet.
 
 ## Run locally
 
@@ -50,9 +51,36 @@ Storage is split into two databases (both ignored by Git):
 
 Override them independently with `--papers-db data/another-papers.sqlite` and `--app-db data/another-app.sqlite`. They must be different files. Category combinations have separate saved digests. Restart the preview server after downloading another batch; a running preview always shows its original snapshot. If downloading fails, the command reports the error rather than silently showing stale data; use `serve` explicitly to view saved data.
 
-## Local semantic scores
+## Editing research interests
 
-`npm start` scores an unscored digest automatically. To score the latest saved digest without downloading arXiv data or starting a server:
+Edit **[interests.md](interests.md)**, the sole profile configuration file. It contains six independent profiles; combining the files does not combine their scores or interests.
+
+```markdown
+## Superconducting Quantum Computing {#superconducting-quantum-computing}
+
+### Subjects
+- Superconducting qubit architectures
+
+### Keywords
+- tunable coupler; tunable coupling
+
+### Positive examples
+### Deprioritize
+### Negative examples
+```
+
+Keep each `{#id}` unique and stable when renaming or rearranging sections. Profile IDs are lowercase letters/digits separated by hyphens. Document order is for editing convenience, not ranking priority.
+
+- **Subjects:** required semantic interest bullets; only these and the display title feed embeddings.
+- **Keywords:** optional explicit lexical signals, one phrase/alias group per bullet. Missing/empty lists are neutral; see scoring details below.
+- **Positive examples:** space for paper IDs/URLs and why they are relevant.
+- **Deprioritize / Negative examples:** space for topics or recommendations that are less relevant, with reasons—not judgments of paper quality or scientific null results. These and positive examples are reserved for future use and currently do not affect ranking.
+
+HTML comments and empty placeholders are ignored. Scientifically interesting negative/null results remain welcome; these profiles are not exclusion filters. Existing ranked digests remain fixed after edits. Use `--profiles my-interests.md` to select a different single Markdown file; directory-based profiles are no longer supported.
+
+## Local scoring and ranking
+
+`npm start` scores and ranks an unranked digest automatically. To score the latest saved digest without downloading arXiv data or starting a server:
 
 ```sh
 npm run score
@@ -66,19 +94,38 @@ npm run score -- --offline
 npm start -- --offline
 ```
 
-`start --offline` uses the latest saved digest, never checks arXiv, and requires cached model assets if scoring is needed. If the application DB has been recreated, offline commands rebuild an unscored digest from the latest archived announcement shared by all requested categories. `serve` neither loads a model nor computes missing scores. Use `--profiles profiles` to choose a different profile directory.
+`start --offline` uses the latest saved digest, never checks arXiv, and requires cached model assets if scoring is needed. If the application DB has been recreated, offline commands rebuild an unscored digest from the latest archived announcement shared by all requested categories. `serve` neither loads a model nor computes missing scores. Use `--profiles my-interests.md` to choose a different profile file.
 
 The baseline is **BGE-small-en-v1.5**, using the pinned `Xenova/bge-small-en-v1.5` ONNX conversion, q8 weights, CLS pooling, and normalized 384-dimensional vectors. Profiles use only their titles and Subjects bullets, with BGE's retrieval-query instruction. Papers use titles and abstracts. Long inputs are split into sentence-oriented chunks within the 512-token limit, repeating the title, then their vectors are averaged and renormalized.
 
-A paper's raw score is its **maximum cosine similarity across the six profiles**. The visible number is `(cosine + 1) / 2`, on a fixed **[0, 1]** scale, rounded to three decimals. It is not a probability, quality assessment, or percentile. BGE similarities can cluster in a narrow, high-valued band; the scale deliberately does not stretch each day's best and worst papers to 1 and 0. Hover over a score to see its closest profile.
+The visible score, rounded to three decimals, is:
 
-Embeddings are cached in SQLite by input content and model/preprocessing fingerprint. Changed positive interests or paper text require new vectors; changes to ignored negative sections do not. The first completed score snapshot for a digest is saved with its profile/model context. Existing unscored digests can acquire scores once, without changing selections or order; later profile/model changes apply only to future digests. Interrupted scoring reuses completed vectors and never publishes partial scores. `unscored` appears when viewing an older digest before scoring it.
+```text
+relevance = 0.60 * semantic + 0.25 * keywords + 0.15 * feedback
+```
+
+- **Semantic:** maximum cosine similarity across profiles, mapped by `(cosine + 1) / 2` to a fixed [0, 1] scale. No daily min-max stretching.
+- **Keywords:** only the explicit `### Keywords` bullets in each profile. Each bullet is one phrase or group of semicolon-separated aliases, e.g. `tunable coupler; tunable coupling`. Match whole normalized phrases (case, punctuation/hyphens, simple plurals), never partial coverage or inferred Subjects words. Title hits count twice as much as abstract hits; aliases and repetitions contribute at most once per group. Evidence saturates as `1 - exp(-evidence / 2)`. A missing/empty keyword list scores a neutral **0.5** for that profile; a configured list with no hits scores **0**. Take the strongest profile score, including neutral values (an unspecified profile therefore gives a 0.5 floor).
+- **Feedback:** a neutral **0.5** until voting is implemented.
+
+Hover over a score to inspect its components and closest semantic profile. These numbers are not probabilities, quality assessments, or percentiles; BGE similarities naturally occupy a narrow high-valued band.
+
+### Selection and order
+
+- **For you:** greedily choose four high relevance scores with a small redundancy penalty.
+- **Adjacent topic:** favor semantic relevance with low keyword overlap, less similarity to the featured set, and a bonus for an unrepresented profile.
+- **Wildcard:** draw from an equal mixture of uniform sampling and softmax sampling over semantic scores (initial temperature 0.05). No keyword weighting or relevance cutoff. Exclude already selected papers and avoid near-duplicates.
+- **Other postings:** greedy Maximal Marginal Relevance, `0.7 * relevance - 0.3 * maximum_similarity + jitter`, comparing initially against all six featured papers and then against each newly ordered paper. Jitter is fixed per paper/date and bounded by ±0.005. This order intentionally does **not** decrease monotonically by relevance score.
+
+Random draws are date/category-seeded; candidate IDs break ties deterministically. Featured slots avoid identical titles and cosine similarities ≥0.95 whenever alternatives exist. Very small or redundant batches relax this preference to fill up to six distinct IDs. Every remaining paper stays available. Defaults are collected in `src/ranking.ts` and saved with each ranking; they are initial settings, not calibrated estimates of scientific importance.
+
+Embeddings are cached in SQLite by input content and model/preprocessing fingerprint. Changed Subjects/title or paper text require new vectors; keyword-only edits and ignored negative sections do not. Explicit keyword lists are snapshotted separately with each ranking. Semantic snapshots retain their profile/model context. The first completed ranking saves score components, featured roles, and the entire remaining order; later profile/model/configuration changes apply only to future digests. Interrupted scoring reuses completed vectors and never publishes a partial ranking. A fetch-only or not-yet-ranked digest has a temporary random preview; run `score` to replace it with its first fixed ranked view. To experiment with new keyword lists for the same saved batch, use a fresh `--app-db` path with `--offline`, preserving the existing digest and paper cache.
 
 ## What counts as “today”?
 
 The source is [arXiv's category RSS feed](https://rss.arxiv.org/rss/quant-ph), not a search for papers submitted on the machine's calendar date. The page shows the feed's announcement date in arXiv's US Eastern timezone. It may be the latest available batch rather than today's date, particularly around weekends and holidays. RSS provides the current batch, not historical backfill.
 
-Include new announcements and cross-listings; exclude replacements/revisions. The RSS feed carries abstracts directly, so there is no need to download individual paper pages or PDFs. PDF links point to the announced version.
+Include new announcements and cross-listings; exclude replacements/revisions. The RSS feed carries abstracts directly, so there is no need to download individual paper pages or PDFs. PDF links point to the announced version. Author names come from the feed's `dc:creator` field; abbreviation of unstructured names uses a heuristic that preserves common surname particles and explicit collaboration names. Full names remain in tooltips. An author metadata side table can enrich matching archived IDs/versions on a feed refresh without rewriting the original announcement snapshots; published application snapshots remain unchanged. Papers without author metadata show “Authors unavailable.”
 
 Saved digests are immutable: repeating a download for the same announcement date and category set does not replace the published page, even if the upstream feed changes. Corrected-batch regeneration is deliberately not implemented yet.
 
@@ -115,11 +162,13 @@ The app uses Node's built-in HTTP server and native HTML `<details>` elements; n
 - `src/arxiv.ts`: RSS fetching/parsing and category configuration.
 - `src/digest.ts`: deduplication and seeded random selection.
 - `src/load.ts`: per-category daily download caching and explicit refresh.
-- `src/profiles.ts`: positive-subject profile loading.
+- `src/profiles.ts`: separate semantic Subjects and explicit Keywords profile loading.
 - `src/embeddings.ts`, `src/bge.ts`: embedding interface, token-bounded chunking, and local BGE backend.
-- `src/scoring.ts`: vector caching, cosine scores, and fixed score snapshots.
+- `src/scoring.ts`: vector caching, cosine scores, and fixed ranking orchestration.
+- `src/ranking.ts`: combined scores, featured selection, wildcard sampling, and MMR ordering.
+- `src/authors.ts`: compact author formatting and display-name normalization.
 - `src/store.ts`, `schema/`: separate paper/application databases and current SQL schemas.
 - `src/math.ts`, `src/render.ts`, `src/server.ts`: safe math/HTML rendering, local KaTeX assets, and preview.
 - `src/cli.ts`: download/preview commands.
 
-See [research-interest profiles](profiles/README.md) and [PLAN.md](PLAN.md) for the intended relevance-based pipeline and later Hugo/Cloudflare integration. Those integrations are not part of this local slice.
+See [research interests](interests.md) and [PLAN.md](PLAN.md) for the intended relevance-based pipeline and later Hugo/Cloudflare integration. Those integrations are not part of this local slice.

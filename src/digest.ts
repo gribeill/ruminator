@@ -1,5 +1,6 @@
 import type { Batch, Paper } from './arxiv.ts';
 import type { SemanticScores } from './scoring.ts';
+import type { Ranking } from './ranking.ts';
 
 export interface Digest {
   date: string;
@@ -7,10 +8,11 @@ export interface Digest {
   papers: Paper[];
   featuredIds: string[];
   semantic?: SemanticScores;
+  ranking?: Ranking;
 }
 
-/** Stable daily randomness is temporary, pending relevance-based selection. */
-function seededRandom(seed: string): () => number {
+/** Separate named seeds keep daily discovery stable across page refreshes. */
+export function seededRandom(seed: string): () => number {
   let state = 2166136261;
   for (const char of seed) state = Math.imul(state ^ char.charCodeAt(0), 16777619);
   return () => {

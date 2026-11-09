@@ -6,6 +6,7 @@ export interface Paper {
   title: string;
   abstract: string;
   categories: string[];
+  authors?: string[];
 }
 
 export interface Batch {
@@ -62,6 +63,8 @@ export function parseFeed(xml: string, category: string): Batch {
     papers.push({
       id: match[1], version: Number(match[2]), title: item.title.trim(),
       abstract, categories: item.category,
+      authors: typeof item['dc:creator'] === 'string'
+        ? item['dc:creator'].split(/,\s*/).map((name: string) => name.trim()).filter(Boolean) : [],
     });
   }
   return { category, date: batchDate, sourceUrl: feedUrl(category), papers };

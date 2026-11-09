@@ -1,4 +1,11 @@
 -- Current development schema only; recreate this DB when the schema changes.
+CREATE TABLE IF NOT EXISTS rankings (
+  announcement_date TEXT NOT NULL,
+  categories_json TEXT NOT NULL,
+  ranking_json TEXT NOT NULL,
+  PRIMARY KEY (announcement_date, categories_json)
+);
+
 CREATE TABLE IF NOT EXISTS digests (
   id INTEGER PRIMARY KEY,
   announcement_date TEXT NOT NULL,

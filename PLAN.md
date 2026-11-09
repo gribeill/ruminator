@@ -24,7 +24,11 @@ Use two SQLite databases and a small database module, keeping SQL within D1's su
 3. Publish the completed digest to the local HTML view/export.
 4. Store subsequent votes separately; they affect only future digests.
 
-A displayed digest is a fixed artifact: page refreshes, new votes, and provider/configuration changes do not reorder or rewrite it. Cache intermediate work so interrupted generation can resume without repeating successful paid calls. Keep incomplete runs separate from published digests. Seeded randomness is reproducible, but persisting final order is what guarantees display stability.
+A completed ranked digest is a fixed artifact: page refreshes, new votes, and provider/configuration changes do not reorder or rewrite it. Fetch-only/unranked previews are provisional until their first ranking is saved. Cache intermediate work so interrupted generation can resume without repeating successful paid calls. Keep incomplete runs separate from published digests. Seeded randomness is reproducible, but persisting final order is what guarantees display stability.
+
+### Research-interest configuration
+
+Use one `interests.md` file containing six independent profiles. Each `## Display name {#stable-id}` heading starts a profile; `### Subjects`, `### Keywords`, and feedback/example headings belong to that profile. Explicit IDs preserve existing identities and stay stable through heading renames/reordering. Parse profiles in ID order so file arrangement does not alter tie-breaking. Subjects remain the only semantic content besides display names; keyword groups remain separate lexical inputs. Missing keywords stay neutral. `--profiles` accepts a Markdown file path, not a directory. There is no parallel/legacy directory format.
 
 ### Local storage
 
@@ -60,8 +64,10 @@ Implement one focused slice at a time, with integration and correctness tests fo
 - [x] **Math rendering and development download cache.** Render delimited TeX in all titles and abstracts with server-side KaTeX, serving styles/fonts locally and retaining escaped source for malformed/unsupported expressions. Cache each category's download once per US Eastern calendar day; make `start`/`fetch` reuse it by default, support `--refresh`, and keep `serve` strictly offline. Persist successful per-category downloads independently of published digests. Test math/security/fallback behavior, local assets, cache hits across category combinations, daily rollover/DST, failures, empty batches, and cache persistence without live arXiv calls.
 - [x] **Local embeddings and visible semantic scores.** Load positive profile subjects; run pinned q8 BGE-small locally through Transformers.js/ONNX with CLS pooling, query instructions, token-bounded sentence chunks, and normalized vectors. Cache vectors by content/model/preprocessing identity; persist complete per-digest semantic score/profile snapshots. Show a three-decimal fixed-scale score and closest-profile tooltip for every entry, retaining current selections/order. Add offline scoring and preview support. Test parsing, normalization, chunking, cache invalidation/isolation, interrupted-run resumption, score visibility, immutability, and current-schema initialization. Verified real-model relevance, long inputs, offline reload, and scoring all 83 cached papers without contacting arXiv.
 - [x] **Separate source/application storage; remove schema compatibility.** Replace numbered migrations with current paper/app schema files and remove old schema versions/fallbacks. Store downloaded batches and freshness in an independent paper database; keep digests, embeddings, and scores in the disposable application database. Reconstruct digests offline after an application reset. Test separate on-disk databases, reset/reopen behavior, preservation of source bytes/freshness, and latest shared-batch selection. Copy the existing local arXiv download once into the new source cache, leaving the original database untouched; no conversion code remains in the app.
-- [ ] **Next:** Implement keyword/feedback components, combined relevance scores, seeded six-paper selection, and MMR ordering. Inspect real posting data to calibrate constants; test determinism, uniqueness, diversity behavior, and preservation of all remaining papers.
-- [ ] Add provider-independent batched summaries, validation, and caching. Test with structured response fixtures and failed/invalid output; retain readable abstracts when summaries are unavailable.
+- [x] **Combined relevance, selection, ordering, and authors.** Implement 0.60 semantic + 0.25 keyword + 0.15 neutral feedback (0.5), visible combined scores with component tooltips, four relevance picks, one adjacent pick, one mixed-uniform/semantic wildcard, and seeded MMR ordering of every remaining paper. Persist configuration, components, roles, and order. Retain expandable abstracts/PDFs and add compact first-two … last-two authors with full-name tooltips. Store author metadata independently of immutable source snapshots. Inspect the actual 83-paper batch and test deterministic ordering, wildcard probabilities, small/redundant pools, near-duplicate avoidance, keyword behavior, author formatting/enrichment, and persistence. One authorized feed refresh supplied authors for all 83 cached papers; back up/rebuild the local development digest and rank offline using cached embeddings.
+- [x] **Explicit keyword vocabulary.** Add curated Keywords sections to all six profiles, with semicolon-separated alias groups. Match only whole normalized explicit phrases, not Subjects or partial token coverage; cap alias/repetition evidence and retain title weighting/saturation. Use neutral 0.5 for a profile with no keywords and 0 for a configured list without hits, preserving strongest-profile aggregation (including neutral values). Snapshot lexical inputs independently of semantic inputs, so keyword-only edits reuse embeddings. Test parsing, phrase/alias behavior, neutral cases, cache isolation, immutable published rankings, and semantic-stage resumption with current lexical inputs. Do not re-download arXiv or silently rewrite existing ranked digests.
+- [x] **Single research-interest file.** Consolidate all six profiles, subjects, keyword groups, and feedback/example placeholders into `interests.md`, retaining explicit stable IDs. Remove the old profile directory/format, update the loader and CLI default/help, and move editing guidance into README.md. Test section isolation, optional keywords, comments, CRLF, stable IDs/reordering, invalid/duplicate IDs, and custom file paths. Verify all parsed profile data exactly matches the pre-consolidation inputs, preserving embeddings/ranking behavior without network requests or database changes.
+- [ ] **Next:** Add provider-independent batched summaries, validation, and caching. Test with structured response fixtures and failed/invalid output; retain readable abstracts when summaries are unavailable.
 - [ ] Complete fixed-digest generation and the minimal reading interface: six featured papers, remaining title links, and persisted up/down/clear votes. Connect feedback to future generation. Test that voting does not change published digests and that feedback is captured only for subsequent runs.
 - [ ] Document and exercise the full local workflow, including resumable generation and cached reruns. Keep external model/API smoke tests optional and explicit about credentials and spend.
 
@@ -70,12 +76,12 @@ Implement one focused slice at a time, with integration and correctness tests fo
 ### Local embedding baseline
 
 - Embed each paper's title and abstract as scientific source text, not rendered HTML.
-- Build profile queries from the profile name and positive subjects; exclude comments, empty sections, and negative feedback. Apply BGE's recommended retrieval-query instruction to profiles, not papers.
+- Build profile queries from the profile name and positive subjects; exclude Keywords, comments, empty sections, and negative feedback. Apply BGE's recommended retrieval-query instruction to profiles, not papers.
 - Use model-appropriate pooling and L2 normalization. Split overlength paper inputs into sentence-oriented, token-bounded chunks with the title repeated; average chunk vectors and renormalize rather than silently truncating long abstracts. Account for special tokens and the title within the context budget.
-- Use maximum cosine similarity across profiles for the initial raw semantic score; retain all per-profile similarities for inspection. Display `(cosine + 1) / 2` on a fixed [0, 1] scale, rounded to three decimals, with the closest profile in a tooltip. This is semantic relevance only, not yet the combined relevance score.
+- Use maximum cosine similarity across profiles for the initial raw semantic score; retain all per-profile similarities for inspection. Display `(cosine + 1) / 2` on a fixed [0, 1] scale, rounded to three decimals, with the closest profile in a tooltip. This normalized semantic component feeds the combined relevance score; the visible number is now the combined score.
 - Download model assets once into a repository-local ignored cache, then support offline inference. Cache vectors by content and a fingerprint including model revision, backend, precision, pooling, and preprocessing/chunking configuration.
 - Implemented artifact: `Xenova/bge-small-en-v1.5`, revision `ea104dacec62c0de699686887e3f920caeb4f3e3`, q8 CPU inference through pinned Transformers.js 4.3.2. Model assets live under ignored `data/models/`; vectors and score snapshots live in SQLite. `score` processes saved data without arXiv calls; `--offline` also prohibits model downloads. `start` scores new/unscored digests; `serve` never performs inference.
-- The first complete semantic snapshot can enrich an existing unscored digest without changing selections/order; after that, profile/model changes affect future digests only. Preserve the complete profile inputs and model fingerprint with each score snapshot.
+- Semantic snapshots retain the original profile inputs; the first complete ranking replaces a provisional random preview with persisted selections/order. Once ranked, profile/model/configuration changes affect future digests only. Preserve the complete profile inputs and model fingerprint with each score snapshot.
 - Treat local ONNX and future hosted outputs as distinct embedding spaces until compatibility is verified; sharing a model name does not guarantee identical preprocessing or vectors.
 - Inspect scores on real cached postings and evaluate a small set of reader-labeled matches, adjacent papers, and misses before calibrating combined scoring. Cosine similarity is not a probability; avoid daily min-max normalization that forces a weak day's best match to appear maximally relevant.
 
@@ -83,7 +89,9 @@ Implement one focused slice at a time, with integration and correctness tests fo
 
 Start with `S = 0.60 * semantic + 0.25 * keywords + 0.15 * feedback`, with components normalized to comparable scales. These are initial weights, not calibrated constants.
 
-Explicit up/down votes mean more or less relevant to the reader's interests, not judgments of scientific quality. Feedback should inform relevance for future papers; absent evidence should be neutral.
+Explicit up/down votes mean more or less relevant to the reader's interests, not judgments of scientific quality. Feedback should inform relevance for future papers; absent evidence should be neutral. For this slice, feedback is always 0.5 and vote collection/learning remains deferred.
+
+Keyword matching uses only explicit `### Keywords` bullets. Semicolons separate aliases in one group. Match whole phrases after case/punctuation/hyphen/simple-plural normalization, never partial coverage or inferred Subjects words; respect even broad terms if explicitly configured. Count each alias group at most once, weight title hits 2× abstract hits, and saturate as `1 - exp(-evidence / 2)`. An absent/empty list is neutral 0.5 for that profile; a configured list without hits scores 0. Take the strongest profile, including neutral values (an unspecified profile gives a 0.5 floor). Persist keyword lists separately with each ranking, alongside matched groups and all score components. Keyword-only edits do not change embedding inputs; when resuming a semantic-only stage, retain frozen semantic inputs but use the current explicit keyword lists for its first ranking. Published rankings remain fixed. Scores are not probabilities or scientific-importance estimates.
 
 ### Featured papers
 
@@ -93,7 +101,9 @@ Show titles, LLM-generated summaries, and abstracts for six distinct papers:
 2. One adjacent-topic paper: favor semantic connections with low keyword overlap and a topic not already represented.
 3. One wildcard: a date-seeded random draw from remaining candidates, excluding near-duplicates of the other selections.
 
-For the wildcard, start with an equal mixture of uniform sampling and softmax sampling over semantic relevance. Feedback may later make a modest adjustment; keywords and hard relevance cutoffs should not constrain this slot. Calibrate softmax temperature against observed similarity distributions rather than assuming a scale.
+Implemented defaults in `src/ranking.ts`: top-slot redundancy penalty 0.04; adjacent score = semantic − 0.35 × keywords − 0.15 × maximum featured similarity + 0.05 for an unrepresented best-matching profile. Avoid identical titles and cosine similarity ≥0.95 for featured slots when alternatives exist. If a pool is too small/redundant, relax that preference to retain up to six distinct IDs; allocate relevance slots first, then adjacent, then wildcard.
+
+For the wildcard, use an equal mixture of uniform sampling and softmax sampling over semantic relevance (initial temperature 0.05, chosen after inspecting the observed semantic range of approximately 0.808–0.903). Feedback may later make a modest adjustment; keywords and hard relevance cutoffs should not constrain this slot. Calibrate softmax temperature against observed similarity distributions rather than assuming a scale.
 
 ### Featured-paper summaries
 
@@ -117,9 +127,9 @@ Keep this contract independent of provider-specific SDKs. Validate returned IDs 
 
 ### Remaining postings
 
-Show every remaining daily posting as a title-only list linking to the paper. Order greedily using Maximal Marginal Relevance (MMR): balance personal relevance against maximum embedding similarity to papers already selected. Initialize this comparison set with the six featured papers so the list opens with alternatives to them.
+Keep the current expandable-title formatting for every remaining posting: title, score, compact authors, and a dropdown revealing the abstract and PDF/arXiv links. Order greedily using Maximal Marginal Relevance (MMR): balance personal relevance against maximum embedding similarity to papers already selected. Initialize this comparison set with the six featured papers so the list opens with alternatives to them.
 
-Add a small, fixed random offset per candidate, seeded by announcement date and applied consistently throughout ordering. Keep the perturbation small relative to the calibrated relevance/diversity terms; it should loosen ordering, not overwhelm it. All remaining papers must eventually appear, including low-scoring papers and near-duplicates excluded from featured slots.
+Implemented MMR balance: 0.7 × relevance − 0.3 × maximum embedding similarity. Add a small, fixed random offset per candidate (±0.005), seeded by announcement date/category/paper ID and applied consistently throughout ordering. Keep the perturbation small relative to the calibrated relevance/diversity terms; it should loosen ordering, not overwhelm it. All remaining papers must eventually appear, including low-scoring papers and near-duplicates excluded from featured slots.
 
 ## Implemented source and batch semantics
 
@@ -131,10 +141,16 @@ The local server binds only to loopback and serves a saved snapshot without netw
 
 A separate per-category download cache tracks when feeds were successfully retrieved, independently of announcement dates and immutable published digests. `start` and `fetch` reuse downloads from the current US Eastern calendar day, even across different category combinations. `--refresh` explicitly bypasses this cache, without overwriting published digests. The download cache and batch archive live solely in the paper database and survive application schema resets. Failed requests do not advance cache freshness, while successful categories remain cached if a later category fails. Since the cache checks only once per calendar day, a later same-day feed update requires an explicit refresh. `start` reports download failures rather than silently serving stale data; `serve` explicitly opens existing data offline.
 
+### Author metadata and local verification
+
+Parse full author names in feed order from `dc:creator`. Show all abbreviated names for lists of up to four authors; longer lists show the first two … last two. Preserve full names in tooltips. RSS names are unstructured, so abbreviation is a documented heuristic; keep explicit collaboration names intact, handle common surname particles, and normalize common TeX accents for display.
+
+Store names by arXiv ID/version in the paper DB's author side table. A refresh can enrich archived paper reads without overwriting the first source batch; previously published app snapshots do not change. The single authorized refresh populated all 83 authors lists. The pre-ranking application snapshot was backed up in ignored `data/`, then its development digest views were regenerated with author metadata; embeddings and semantic caches were retained. No per-paper arXiv requests were made.
+
 ## Open design questions
 - Choose the summary provider/model separately; keep provider configuration flexible and credentials out of saved/public artifacts.
-- Specify score normalization, feedback propagation with neutral behavior when no votes exist, adjacent-topic selection, MMR balance, and perturbation scale using actual posting data.
-- Fix deterministic candidate ordering and stable paper IDs for seeded selection; define behavior for batches with fewer than six papers and all other undersized candidate pools.
+- Evaluate the initial keyword/adjacent/MMR/wildcard constants against reader judgments; current values are explicit defaults, not final calibration.
+- Define vote-based feedback propagation when implementing votes; retain the neutral 0.5 baseline until then.
 - Define explicit handling of corrected batches or intentional regeneration without silently mutating a published digest.
 
 The first local browsing slice is complete. Continue with the next unchecked slice only when requested; Cloudflare and Hugo integration remain deferred.
