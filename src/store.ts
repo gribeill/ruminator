@@ -4,6 +4,7 @@ import type { Batch } from './arxiv.ts';
 import { createDigest, type Digest } from './digest.ts';
 import type { SemanticScores } from './scoring.ts';
 import type { Ranking } from './ranking.ts';
+import type { CachedPaperText } from './fulltext.ts';
 
 function openDatabase(path: string, schema: 'app' | 'papers'): DatabaseSync {
   const db = new DatabaseSync(path);
@@ -23,6 +24,19 @@ export function openAppDatabase(path: string): DatabaseSync {
 
 export function openPaperDatabase(path: string): DatabaseSync {
   return openDatabase(path, 'papers');
+}
+
+/** Paper-version HTML/text caches survive application DB resets. */
+export function readPaperText(db: DatabaseSync, paper: { id: string; version: number }): CachedPaperText | undefined {
+  const row = db.prepare('SELECT html, result_json FROM paper_texts WHERE arxiv_id = ? AND version = ?')
+    .get(paper.id, paper.version) as { html: string | null; result_json: string } | undefined;
+  return row ? { html: row.html, result: JSON.parse(row.result_json) } : undefined;
+}
+
+export function savePaperText(db: DatabaseSync, record: CachedPaperText): void {
+  db.prepare(`INSERT INTO paper_texts (arxiv_id, version, html, result_json) VALUES (?, ?, ?, ?)
+    ON CONFLICT (arxiv_id, version) DO UPDATE SET html = excluded.html, result_json = excluded.result_json`)
+    .run(record.result.paperId, record.result.version, record.html, JSON.stringify(record.result));
 }
 
 interface DigestRow {

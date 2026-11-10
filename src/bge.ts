@@ -4,6 +4,7 @@ import { averageVectors, splitChunks, type EmbeddingProvider } from './embedding
 
 const MODEL = 'Xenova/bge-small-en-v1.5';
 const REVISION = 'ea104dacec62c0de699686887e3f920caeb4f3e3';
+export const BGE_CONFIG = { model: MODEL, revision: REVISION, dtype: 'q8', pooling: 'cls' } as const;
 const QUERY = 'Represent this sentence for searching relevant passages: ';
 
 export const BGE_FINGERPRINT = JSON.stringify({

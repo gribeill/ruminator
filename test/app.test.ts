@@ -91,6 +91,12 @@ test('real SQLite: current schema, immutable digest snapshots, and empty batches
 test('HTML expands only remaining titles, links every PDF, and escapes untrusted text', () => {
   const digest = createDigest([batch]);
   const html = renderDigest(digest);
+  assert.ok(html.includes(`<title>ruminator · ${digest.date}</title>`));
+  assert.ok(html.includes('<h1>ruminator</h1>'));
+  assert.ok(html.includes('<pre class="cow" aria-hidden="true">'));
+  assert.ok(html.includes(String.raw`(oo)\_______`));
+  assert.ok(html.includes(String.raw`||----w |`));
+  assert.doesNotMatch(html, /arXiv digest|arxiv-digest/);
   assert.equal((html.match(/<article>/g) ?? []).length, 6);
   assert.equal((html.match(/<details>/g) ?? []).length, 3);
   assert.equal((html.match(/>PDF<\/a>/g) ?? []).length, 9);

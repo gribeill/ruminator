@@ -6,6 +6,16 @@ CREATE TABLE IF NOT EXISTS paper_authors (
   PRIMARY KEY (arxiv_id, version)
 );
 
+-- Full-text retrieval is independent of immutable digests and ranking.
+-- Keep raw HTML for re-extraction and cache failures until an explicit retry.
+CREATE TABLE IF NOT EXISTS paper_texts (
+  arxiv_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  html TEXT,
+  result_json TEXT NOT NULL,
+  PRIMARY KEY (arxiv_id, version)
+);
+
 -- Source data lives separately from disposable application state.
 CREATE TABLE IF NOT EXISTS batches (
   category TEXT NOT NULL,

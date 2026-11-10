@@ -4,7 +4,7 @@ import type { Digest } from './digest.ts';
 import { normalize, type EmbeddingInput, type EmbeddingProvider } from './embeddings.ts';
 import type { Profile } from './profiles.ts';
 import { readRanking, readSemanticScores, saveRanking, saveSemanticScores } from './store.ts';
-import { rankPapers } from './ranking.ts';
+import { rankPapers, DEFAULT_WEIGHTS, type ScoreWeights } from './ranking.ts';
 
 export interface PaperScore {
   score: number;
@@ -41,6 +41,7 @@ export async function cachedEmbedding(db: DatabaseSync, provider: EmbeddingProvi
 export async function scoreDigest(
   db: DatabaseSync, digest: Digest, profiles: Profile[], createProvider: () => Promise<EmbeddingProvider>,
   log: (message: string) => void = console.log,
+  weights: ScoreWeights = DEFAULT_WEIGHTS,
 ): Promise<Digest> {
   const existing = readSemanticScores(db, digest);
   const ranking = readRanking(db, digest);
@@ -79,7 +80,7 @@ export async function scoreDigest(
     const keywordProfiles = semantic.profiles.map(profile => ({
       ...profile, keywords: profiles.find(p => p.id === profile.id)?.keywords ?? [],
     }));
-    const ranked = saveRanking(db, digest, rankPapers(digest, semantic, vectors, keywordProfiles));
+    const ranked = saveRanking(db, digest, rankPapers(digest, semantic, vectors, keywordProfiles, weights));
     return { ...digest, semantic, ranking: ranked };
   } finally { await provider.dispose?.(); }
 }

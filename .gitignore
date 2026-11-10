@@ -1,3 +1,9 @@
+# API keys
+.env
+.env.*
+
+.dev.vars*
+
 # Local TypeScript app
 node_modules/
 .npm-cache/

@@ -8,19 +8,26 @@ import { createDigestServer } from './server.ts';
 import { createBgeProvider } from './bge.ts';
 import { loadProfiles } from './profiles.ts';
 import { scoreDigest } from './scoring.ts';
+import { loadConfig } from './config.ts';
+import { retrieveFeaturedText } from './fulltext.ts';
 
-const usage = `Usage: npm run <start|fetch|serve|score> -- [options]
+const usage = `ruminator — a local arXiv browser
+
+Usage: npm run <start|fetch|serve|score|text> -- [options]
   start                  Use today's cached download, or download, then serve
   fetch                  Use today's cached download, or download, and save only
   serve                  Serve saved data without network access or inference
   score                  Score the latest saved digest (never contacts arXiv)
+  text                   Cache HTML text for saved featured papers only
   --categories quant-ph  Comma-separated arXiv categories
   --app-db data/app.sqlite       Disposable application state
   --papers-db data/papers.sqlite Downloaded paper information and source metadata
   --port 3000            Local preview port
   --refresh              Bypass daily download cache (start/fetch only)
+  --config config.toml   Model, scoring, and tokenizer configuration
   --profiles interests.md Research-interest Markdown file
-  --offline              Use saved digest and cached model assets only
+  --offline              Use saved data and cached assets only; no network
+  --retry-unavailable    Retry unavailable HTML (text only; successes stay cached)
 `;
 
 async function main(): Promise<void> {
@@ -32,17 +39,23 @@ async function main(): Promise<void> {
       'papers-db': { type: 'string', default: 'data/papers.sqlite' },
       port: { type: 'string', default: '3000' },
       refresh: { type: 'boolean', default: false },
+      'retry-unavailable': { type: 'boolean', default: false },
       offline: { type: 'boolean', default: false },
       profiles: { type: 'string', default: 'interests.md' },
+      config: { type: 'string', default: 'config.toml' },
       help: { type: 'boolean', short: 'h' },
     },
   });
   if (values.help) { console.log(usage); return; }
   const command = positionals[0];
-  if (positionals.length !== 1 || !['start', 'fetch', 'serve', 'score'].includes(command)) throw new Error(usage);
-  if (values.refresh && (values.offline || command === 'serve' || command === 'score')) {
+  if (positionals.length !== 1 || !['start', 'fetch', 'serve', 'score', 'text'].includes(command)) throw new Error(usage);
+  if (values['retry-unavailable'] && (command !== 'text' || values.offline)) {
+    throw new Error('--retry-unavailable requires text without --offline');
+  }
+  if (values.refresh && (values.offline || !['start', 'fetch'].includes(command))) {
     throw new Error('--refresh requires start or fetch without --offline');
   }
+  const config = loadConfig(values.config);
   const categories = categoriesFrom(values.categories);
   const port = Number(values.port);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Port must be between 1 and 65535');
@@ -64,15 +77,18 @@ async function main(): Promise<void> {
     if (command === 'start' || command === 'score') {
       if (!digest.ranking) {
         console.log('Computing local scores and diversity-aware ranking (cached embeddings are reused)…');
-        digest = await scoreDigest(appDb, digest, loadProfiles(values.profiles), () => createBgeProvider({ offline: values.offline }));
+        digest = await scoreDigest(appDb, digest, loadProfiles(values.profiles), () => createBgeProvider({ offline: values.offline }), console.log, config.scoring.weights);
       }
       console.log('Using saved relevance scores, featured selections, and MMR listing order.');
+    }
+    if (command === 'text') {
+      await retrieveFeaturedText(papersDb, digest, { offline: values.offline, retryUnavailable: values['retry-unavailable'] });
     }
   } finally {
     appDb.close();
     papersDb.close();
   }
-  if (command === 'fetch' || command === 'score') return;
+  if (command === 'fetch' || command === 'score' || command === 'text') return;
   const server = createDigestServer(digest!);
   server.on('error', error => { console.error(error.message); process.exitCode = 1; });
   server.listen(port, '127.0.0.1', () => console.log(`Browse http://127.0.0.1:${port} (announcement ${digest!.date})`));

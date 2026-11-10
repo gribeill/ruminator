@@ -3,9 +3,26 @@ import { seededRandom, type Digest } from './digest.ts';
 import type { Profile } from './profiles.ts';
 import type { SemanticScores } from './scoring.ts';
 
+export interface ScoreWeights {
+  semantic: number;
+  keywords: number;
+  feedback: number;
+}
+
+export const DEFAULT_WEIGHTS: Readonly<ScoreWeights> = { semantic: 0.60, keywords: 0.25, feedback: 0.15 };
+
+/** Reject rather than silently normalize weights, keeping saved scores interpretable. */
+export function validateWeights(weights: ScoreWeights): void {
+  const values = [weights.semantic, weights.keywords, weights.feedback];
+  if (values.some(v => typeof v !== 'number' || !Number.isFinite(v) || v < 0) ||
+      Math.abs(values.reduce((a, b) => a + b, 0) - 1) > 1e-9) {
+    throw new Error('scoring.weights must be nonnegative finite numbers summing to 1');
+  }
+}
+
 export const RANKING_CONFIG = {
   version: 'explicit-keywords-mmr-v2',
-  weights: { semantic: 0.60, keywords: 0.25, feedback: 0.15 },
+  weights: DEFAULT_WEIGHTS,
   feedback: 0.5,
   keywordSaturation: 2,
   topRedundancy: 0.04,
@@ -81,7 +98,9 @@ export function wildcardProbabilities(semanticScores: number[], temperature: num
 }
 
 /** Pure selection/order calculation; normalized vectors must share one model. */
-export function rankPapers(digest: Digest, semantic: SemanticScores, vectors: Record<string, number[]>, keywordProfiles: Profile[] = semantic.profiles): Ranking {
+export function rankPapers(digest: Digest, semantic: SemanticScores, vectors: Record<string, number[]>, keywordProfiles: Profile[] = semantic.profiles, weights: ScoreWeights = DEFAULT_WEIGHTS): Ranking {
+  validateWeights(weights);
+  const config = { ...RANKING_CONFIG, weights: { ...weights } };
   const ids = digest.papers.map(p => p.id).sort();
   if (new Set(ids).size !== ids.length) throw new Error('Duplicate paper IDs in ranking input');
   const dimensions = ids.length ? vectors[ids[0]]?.length : 0;
@@ -97,7 +116,6 @@ export function rankPapers(digest: Digest, semantic: SemanticScores, vectors: Re
   for (const paper of digest.papers) {
     const keywords = keywordScore(paper, keywordProfiles);
     const s = semantic.papers[paper.id].score;
-    const weights = RANKING_CONFIG.weights;
     scores[paper.id] = {
       semantic: s, keywords: keywords.score, feedback: RANKING_CONFIG.feedback,
       total: weights.semantic * s + weights.keywords * keywords.score + weights.feedback * RANKING_CONFIG.feedback,
@@ -164,7 +182,7 @@ export function rankPapers(digest: Digest, semantic: SemanticScores, vectors: Re
     pool.delete(id);
     for (const other of pool) maxRedundancy[other] = Math.max(maxRedundancy[other], similarity(other, id));
   }
-  return { config: RANKING_CONFIG, scores,
+  return { config, scores,
     keywordProfiles: keywordProfiles.map(p => ({ id: p.id, keywords: [...(p.keywords ?? [])] })),
     featured, remainingIds, mmrScores };
 }

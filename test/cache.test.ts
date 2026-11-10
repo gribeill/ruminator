@@ -114,7 +114,7 @@ test('recreating the application DB preserves source data and rebuilds a digest 
       fingerprint: 'test', dimensions: 2, embed: async () => [1, 0],
     }), log);
     assert.ok(latestDigest(app, ['quant-ph'])?.semantic);
-    assert.deepEqual(papers.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all().map(r => r.name), ['batches', 'feed_downloads', 'paper_authors']);
+    assert.deepEqual(papers.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all().map(r => r.name), ['batches', 'feed_downloads', 'paper_authors', 'paper_texts']);
     assert.deepEqual(app.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all().map(r => r.name), ['digests', 'embeddings', 'rankings', 'semantic_scores']);
     app.close();
     papers.close();

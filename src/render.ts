@@ -3,6 +3,13 @@ import type { Digest } from './digest.ts';
 import { escapeHtml as escape, renderMathText } from './math.ts';
 import { compactAuthors, displayName } from './authors.ts';
 
+// Keep the cow as literal text, then escape it like any other HTML content.
+const cow = String.raw`            ^__^
+            (oo)\_______
+            (__)\       )\/\
+                ||----w |
+                ||     ||`;
+
 function abstract(paper: Paper): string {
   return `<p class="abstract">${renderMathText(paper.abstract)}</p><p><a href="${escape(pdfUrl(paper))}">PDF</a> · <a href="https://arxiv.org/abs/${escape(paper.id)}v${paper.version}">arXiv:${escape(paper.id)}</a></p>`;
 }
@@ -40,12 +47,14 @@ export function renderDigest(digest: Digest): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>arXiv digest · ${escape(digest.date)}</title>
+<title>ruminator · ${escape(digest.date)}</title>
 <link rel="stylesheet" href="/assets/katex/katex.min.css">
 <style>
 body { max-width: 54rem; margin: 2rem auto; padding: 0 1rem; font: 17px/1.55 system-ui, sans-serif; color: #222; background: #fff; }
 h1, h2, h3 { line-height: 1.3; }
 h3 { font-size: 1.1rem; }
+.brand { display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap; }
+.cow { margin: 0 0 0 auto; font: 12px/1.2 monospace; white-space: pre; }
 article { margin: 2rem 0; }
 .abstract { white-space: pre-wrap; }
 .katex { white-space: normal; }
@@ -58,7 +67,8 @@ a { color: #174b92; }
 </style>
 </head>
 <body>
-<header><h1>arXiv digest</h1>
+<header><div class="brand"><h1>ruminator</h1>
+<pre class="cow" aria-hidden="true">${escape(cow)}</pre></div>
 <p>${escape(digest.categories.join(', '))} · Announcement: <time datetime="${escape(digest.date)}">${escape(digest.date)}</time> · ${digest.papers.length} papers</p>
 <p>Latest downloaded announcement batch, including cross-listings; revisions excluded.</p>
 <p>${digest.ranking ? 'Relevance scores: 0–1, not probabilities. Hover for semantic/keyword/feedback components. The remaining list balances relevance and topic diversity, so scores need not decrease monotonically.' : 'Ranking not yet saved. Run npm run score to score and order this batch locally.'}</p></header>

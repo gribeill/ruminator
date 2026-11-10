@@ -1,5 +1,5 @@
 {
-  "name": "arxiv-digest",
+  "name": "ruminator",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -13,12 +13,16 @@
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
     "score": "node src/cli.ts score",
+    "text": "node src/cli.ts text",
     "test:model": "node --test test/model.integration.ts"
   },
   "dependencies": {
     "@huggingface/transformers": "4.3.2",
     "fast-xml-parser": "^5.0.0",
-    "katex": "^0.19.1"
+    "gpt-tokenizer": "^4.1.1",
+    "katex": "^0.19.1",
+    "linkedom": "^0.18.15",
+    "smol-toml": "^1.9.1"
   },
   "devDependencies": {
     "@types/katex": "^0.16.8",

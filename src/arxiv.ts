@@ -72,7 +72,7 @@ export function parseFeed(xml: string, category: string): Batch {
 
 export async function fetchBatch(category: string): Promise<Batch> {
   const response = await fetch(feedUrl(category), {
-    headers: { 'User-Agent': 'arxiv-digest/0.1 (local literature browser)' },
+    headers: { 'User-Agent': 'ruminator/0.1 (local literature browser)' },
     signal: AbortSignal.timeout(30_000),
   });
   if (!response.ok) throw new Error(`arXiv ${category}: HTTP ${response.status}`);
