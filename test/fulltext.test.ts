@@ -12,6 +12,7 @@ import { latestDigest, openAppDatabase, openPaperDatabase, readPaperText, saveDi
 import { scoreDigest } from '../src/scoring.ts';
 
 const html = readFileSync(new URL('./fixtures/paper.html', import.meta.url), 'utf8');
+const unsectioned = readFileSync(new URL('./fixtures/paper-unsectioned.html', import.meta.url), 'utf8');
 const batch = { category: 'quant-ph', date: '2026-11-09', sourceUrl: 'fixture', papers: Array.from({ length: 8 }, (_, i) => ({
   id: `2611.${String(i + 1).padStart(5, '0')}`, version: 1, title: `Paper ${i}`, abstract: 'Abstract only.', categories: ['quant-ph'],
 })) };
@@ -30,8 +31,43 @@ test('HTML extraction keeps body structure, equations, captions, tables, and app
   assert.match(text, /Iterations 1000/);
   assert.match(text, /Appendix A/);
   assert.throws(() => extractArxivHtml('<html><body>Access denied</body></html>'), /No arXiv HTML/);
-  assert.throws(() => extractArxivHtml('<article class="ltx_document"><div class="ltx_abstract">Abstract only.</div></article>'), /body sections/);
-  assert.throws(() => extractArxivHtml(`<article class="ltx_document"><section class="ltx_section"><script>${'junk'.repeat(100)}</script></section></article>`), /body sections/);
+  assert.throws(() => extractArxivHtml('<article class="ltx_document"><div class="ltx_abstract">Abstract only.</div></article>'), /substantive full-text body/);
+  assert.throws(() => extractArxivHtml(`<article class="ltx_document"><section class="ltx_section"><script>${'junk'.repeat(100)}</script></section></article>`), /substantive full-text body/);
+});
+
+test('unsectioned articles are full text, but metadata/abstract/references alone are not', () => {
+  const text = extractArxivHtml(unsectioned);
+  assert.match(text, /We simulate a finite quantum system/);
+  assert.match(text, /Reference retained/);
+  assert.match(text, /Additional methods after the references/);
+  assert.match(text, /A short abstract/); // The body check must not remove these from output.
+  const metadataOnly = `<article class="ltx_document">
+    <h1 class="ltx_title_document">${'A long title '.repeat(40)}</h1>
+    <div class="ltx_authors">${'An Author '.repeat(40)}</div>
+    <div class="ltx_abstract">${'An abstract sentence. '.repeat(40)}</div>
+    <section class="ltx_bibliography">${'A reference. '.repeat(40)}</section>
+  </article>`;
+  assert.throws(() => extractArxivHtml(metadataOnly), /substantive full-text body/);
+});
+
+test('extractor upgrade recovers cached unsectioned HTML offline without redownloading', async () => {
+  const papers = openPaperDatabase(':memory:');
+  const app = openAppDatabase(':memory:');
+  try {
+    const digest = await scoreDigest(app, saveDigest(app, [{ ...batch, papers: batch.papers.slice(0, 1) }]), profiles, provider, quiet);
+    const paper = digest.papers[0];
+    savePaperText(papers, { html: unsectioned, result: {
+      paperId: paper.id, version: paper.version, status: 'unavailable', extractor: 'arxiv-html-v1',
+      sourceUrl: `https://arxiv.org/html/${paper.id}v1`, checkedAt: '2026-11-10T12:00:00Z', reason: 'No usable full-text body sections found',
+    } });
+    const result = await retrieveFeaturedText(papers, digest, { offline: true, log: quiet,
+      fetcher: async () => { throw new Error('Must not download'); } });
+    assert.equal(result[0].status, 'available');
+    assert.equal(result[0].extractor, HTML_EXTRACTOR);
+    assert.equal(result[0].checkedAt, '2026-11-10T12:00:00Z');
+    assert.match(result[0].text!, /Additional methods after the references/);
+    assert.equal(readPaperText(papers, paper)!.result.status, 'available');
+  } finally { app.close(); papers.close(); }
 });
 
 test('six sequential HTML requests, persistent positive/negative caches, explicit retries, and unchanged ranking', async () => {
@@ -159,6 +195,38 @@ test('text CLI reads saved selections offline without loading a model or changin
     assert.equal(invalid.status, 1);
     assert.match(invalid.stderr, /requires text without --offline/);
   } finally { rmSync(dir, { recursive: true }); }
+});
+
+test('failed manual retries do not stop later papers or future retries and preserve downloaded HTML', async () => {
+  const papers = openPaperDatabase(':memory:');
+  const app = openAppDatabase(':memory:');
+  try {
+    const digest = await scoreDigest(app, saveDigest(app, [{ ...batch, papers: batch.papers.slice(0, 2) }]), profiles, provider, quiet);
+    const first = digest.ranking!.featured[0].id;
+    let phase = 0;
+    const requested: string[] = [];
+    const invalidHtml = '<article class="ltx_document"><div class="ltx_abstract">Only an abstract.</div></article>';
+    const fetcher: typeof fetch = async url => {
+      const id = String(url).split('/').pop()!.replace(/v1$/, '');
+      requested.push(id);
+      if (id === first && phase === 1) throw new Error('Temporary download failure');
+      return new Response(id === first && phase === 0 ? invalidHtml : unsectioned, { headers: { 'Content-Type': 'text/html' } });
+    };
+    const options = { fetcher, minIntervalMs: 0, log: quiet };
+    const initial = await retrieveFeaturedText(papers, digest, options);
+    assert.equal(initial[0].status, 'unavailable');
+    assert.equal(initial[1].status, 'available');
+    phase = 1;
+    const failed = await retrieveFeaturedText(papers, digest, { ...options, retryUnavailable: true });
+    assert.equal(failed[0].status, 'unavailable');
+    assert.equal(failed[1].status, 'available');
+    assert.equal(readPaperText(papers, { id: first, version: 1 })!.html, invalidHtml);
+    phase = 2;
+    const repaired = await retrieveFeaturedText(papers, digest, { ...options, retryUnavailable: true });
+    assert.ok(repaired.every(r => r.status === 'available'));
+    assert.equal(requested.length, 4); // Two initial requests, then one per manual retry.
+    assert.equal(requested.filter(id => id !== first).length, 1); // Success never redownloaded.
+  } finally { app.close(); papers.close(); }
 });
 
 test('network, content-type, and oversize failures are explicit and cached without abstract fallback', async () => {

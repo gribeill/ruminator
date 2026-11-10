@@ -5,3 +5,5 @@
 The fixture preserves source text and XML escaping. Tests deliberately run offline; dates and paper IDs are test data, not assumptions about the current day.
 
 `paper.html` is a synthetic arXiv/LaTeXML-style article, not a downloaded scientific paper. It exercises article-only extraction, section and paragraph boundaries, MathML with TeX alternatives, Unicode/entities, image alt text/captions, tables, appendices, and excluded navigation/scripts. Retrieval integration tests serve it over loopback HTTP without contacting arXiv.
+
+`paper-unsectioned.html` is a synthetic regression fixture for papers with prose paragraphs but no numbered sections, matching the layout that caused extraction of `2611.12481v1` to fail. It also checks that bibliography and post-reference methods are retained.

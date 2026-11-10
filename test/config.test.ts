@@ -13,13 +13,13 @@ const text = readFileSync(new URL('../config.toml', import.meta.url), 'utf8');
 test('documented TOML loads with existing defaults and custom file paths', () => {
   const config = parseConfig(text);
   assert.deepEqual(config.scoring.weights, DEFAULT_WEIGHTS);
-  assert.equal(config.llm.model, 'openai/gpt-6-luna');
+  assert.ok(config.llm.model.trim()); // The checked-in model is intentionally editable.
   const fingerprint = JSON.parse(BGE_FINGERPRINT);
   for (const [key, value] of Object.entries(config.embedding)) assert.equal(fingerprint[key], value);
   const dir = mkdtempSync('data/config-test-');
   try {
     const path = join(dir, 'custom.toml');
-    writeFileSync(path, text.replace('openai/gpt-6-luna', 'openai/another-model'));
+    writeFileSync(path, text.replace(/^model = .*$/m, 'model = "openai/another-model"'));
     assert.equal(loadConfig(path).llm.model, 'openai/another-model');
   } finally { rmSync(dir, { recursive: true }); }
 });
@@ -36,13 +36,13 @@ test('configuration rejects typos, unsupported backends, and invalid numeric set
     ['message_overhead = 32', 'message_overhead = 0.5', /overheads/],
     ['request_overhead = 64', 'request_overhead = -1', /overheads/],
     ['encoding = "o200k_base"', 'encoding = "cl100k_base"', /o200k_base/],
-    ['model = "openai/gpt-6-luna"', 'model = ""', /model/],
+    [/^model = .*$/m, 'model = ""', /model/],
     ['semantic = 0.60', 'semantics = 0.60', /Unknown configuration/],
     ['semantic = 0.60', '', /Missing configuration/],
-    ['run_input_tokens = 250000', 'run_input_tokens = 0', /Summary limits/],
-    ['paper_input_tokens = 100000', 'paper_input_tokens = 1.5', /Summary limits/],
-    ['max_completion_tokens = 2048', 'max_completion_tokens = -1', /Summary limits/],
-    ['context_tokens = 102048', 'context_tokens = 2048', /Summary limits/],
+    [/^run_input_tokens = .*$/m, 'run_input_tokens = 0', /Summary limits/],
+    [/^paper_input_tokens = .*$/m, 'paper_input_tokens = 1.5', /Summary limits/],
+    [/^max_completion_tokens = .*$/m, 'max_completion_tokens = -1', /Summary limits/],
+    [/^context_tokens = .*$/m, 'context_tokens = 0', /Summary limits/],
   ] as const) assert.throws(() => parseConfig(text.replace(from, to)), error);
   assert.throws(() => parseConfig('broken = ['));
 });

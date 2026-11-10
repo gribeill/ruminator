@@ -1,5 +1,5 @@
 -- Current development schema only; recreate this DB when the schema changes.
--- Runs freeze settings and reserve estimated input before any paid request.
+-- Runs record the latest invoked settings and retain input spent across invocations.
 CREATE TABLE IF NOT EXISTS summary_runs (
   announcement_date TEXT NOT NULL,
   categories_json TEXT NOT NULL,

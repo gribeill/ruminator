@@ -65,11 +65,16 @@ function readSummaryRun(db: DatabaseSync, digest: Digest): SummaryRun {
   return { config: JSON.parse(row.config_json), usedInputTokens: row.used_input_tokens, budgetExhausted: !!row.budget_exhausted };
 }
 
+/** Refresh settings for this explicit invocation, retaining spent tokens and outcomes. */
 export function startSummaryRun(db: DatabaseSync, digest: Digest, config: SummaryConfig): SummaryRun {
   // Explicit fields keep credentials and unrelated configuration out of snapshots.
   const snapshot = { llm: config.llm, tokenizer: config.tokenizer, summaries: config.summaries };
   db.prepare(`INSERT INTO summary_runs (announcement_date, categories_json, config_json) VALUES (?, ?, ?)
-    ON CONFLICT DO NOTHING`).run(...digestKey(digest), JSON.stringify(snapshot));
+    ON CONFLICT (announcement_date, categories_json) DO UPDATE SET
+      budget_exhausted = CASE
+        WHEN json_extract(excluded.config_json, '$.summaries.run_input_tokens') > json_extract(summary_runs.config_json, '$.summaries.run_input_tokens')
+        THEN 0 ELSE summary_runs.budget_exhausted END,
+      config_json = excluded.config_json`).run(...digestKey(digest), JSON.stringify(snapshot));
   return readSummaryRun(db, digest);
 }
 
@@ -84,11 +89,17 @@ export function readSummaryCache(db: DatabaseSync, key: string): PaperSummary | 
   return row ? JSON.parse(row.result_json) : undefined;
 }
 
-/** Claim once and reserve input atomically; resumption never repeats a paid attempt. */
+/** Claim once and reserve input atomically; resumption never repeats a paid attempt.
+ * HTML-unavailable outcomes are preconditions, not attempts, and may be replaced
+ * when a later manual summarize invocation finds usable cached text.
+ */
 export function claimSummary(db: DatabaseSync, digest: Digest, result: PaperSummary, inputTokens: number): boolean {
   db.exec('BEGIN IMMEDIATE');
   try {
-    if (readSummaries(db, digest)[result.paperId]) { db.exec('COMMIT'); return false; }
+    const previous = readSummaries(db, digest)[result.paperId];
+    if (previous && (previous.status !== 'html_unavailable' || result.status === 'html_unavailable')) {
+      db.exec('COMMIT'); return false;
+    }
     const run = readSummaryRun(db, digest);
     let claimed = true;
     if (inputTokens > 0 && (run.budgetExhausted || inputTokens > run.config.summaries.run_input_tokens - run.usedInputTokens)) {
@@ -100,7 +111,8 @@ export function claimSummary(db: DatabaseSync, digest: Digest, result: PaperSumm
       db.prepare('UPDATE summary_runs SET used_input_tokens = used_input_tokens + ? WHERE announcement_date = ? AND categories_json = ?')
         .run(inputTokens, ...digestKey(digest));
     }
-    db.prepare('INSERT INTO digest_summaries (announcement_date, categories_json, arxiv_id, result_json) VALUES (?, ?, ?, ?)')
+    db.prepare(`INSERT INTO digest_summaries (announcement_date, categories_json, arxiv_id, result_json) VALUES (?, ?, ?, ?)
+      ON CONFLICT (announcement_date, categories_json, arxiv_id) DO UPDATE SET result_json = excluded.result_json`)
       .run(...digestKey(digest), result.paperId, JSON.stringify(result));
     db.exec('COMMIT');
     return claimed;

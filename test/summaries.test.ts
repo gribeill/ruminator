@@ -12,7 +12,7 @@ import { loadConfig, type Config } from '../src/config.ts';
 import { renderDigest } from '../src/render.ts';
 import { scoreDigest } from '../src/scoring.ts';
 import { claimSummary, latestDigest, openAppDatabase, openPaperDatabase, readPaperText, readSummaries, saveDigest, savePaperText, startSummaryRun } from '../src/store.ts';
-import { summarizeFeatured, summaryMessages, SUMMARY_PROMPT_VERSION, validateSummary, type PaperSummary, type SummaryProvider } from '../src/summaries.ts';
+import { reportSummaryTokens, summarizeFeatured, summaryMessages, SUMMARY_PROMPT_VERSION, validateSummary, type PaperSummary, type SummaryProvider } from '../src/summaries.ts';
 import { estimatePromptTokens } from '../src/tokenizer.ts';
 
 const quiet = () => {};
@@ -113,6 +113,61 @@ test('six sequential calls use full text; persist summaries/provenance/usage and
   }
 });
 
+test('token report counts the complete current prompt for all six papers, even cached summaries; missing HTML gives partial totals', async () => {
+  const { app, papers, digest } = await setup();
+  try {
+    await summarizeFeatured(app, papers, digest, config, () => ({ async summarize() { return { summary }; } }), quiet);
+    const before = readSummaries(app, digest);
+    const estimates = digest.ranking!.featured.map(({ id }) => {
+      const paper = digest.papers.find(p => p.id === id)!;
+      return estimatePromptTokens(summaryMessages(paper, body), config.tokenizer);
+    });
+    const expectedInput = estimates.reduce((sum, e) => sum + e.estimatedInputTokens, 0);
+    const expectedText = estimates.reduce((sum, e) => sum + e.textTokens, 0);
+    const completion = 6 * config.summaries.max_completion_tokens;
+    const logs: string[] = [];
+    reportSummaryTokens(papers, digest, config, line => logs.push(line));
+    assert.equal(logs.filter(line => /^2611\./.test(line)).length, 6);
+    assert.ok(logs.includes(`Total (6/6 papers): raw text ${expectedText}; estimated input ${expectedInput}; completion allowance ${completion}; combined reservation ${expectedInput + completion}`));
+    const paper = digest.papers.find(p => p.id === digest.ranking!.featured[0].id)!;
+    const record = readPaperText(papers, paper)!;
+    savePaperText(papers, { ...record, result: { ...record.result, status: 'unavailable', text: undefined } });
+    logs.length = 0;
+    reportSummaryTokens(papers, digest, config, line => logs.push(line));
+    assert.ok(logs.some(line => line.startsWith(`${paper.id}v1: unavailable`)));
+    assert.ok(logs.some(line => line.startsWith('Total (5/6 papers; partial — missing HTML)') && line.includes(`estimated input ${expectedInput - estimates[0].estimatedInputTokens};`)));
+    assert.deepEqual(readSummaries(app, digest), before);
+  } finally { app.close(); papers.close(); }
+});
+
+test('CLI --tokens is estimate-only, leaves both databases unchanged, and rejects destructive combinations', async () => {
+  const dir = mkdtempSync('data/summary-tokens-');
+  const appPath = join(dir, 'app.sqlite');
+  const papersPath = join(dir, 'papers.sqlite');
+  const { app, papers } = await setup(1, appPath, papersPath);
+  app.close(); papers.close();
+  const appBytes = readFileSync(appPath), paperBytes = readFileSync(papersPath);
+  try {
+    const args = ['src/cli.ts', 'summarize', '--tokens', '--app-db', appPath, '--papers-db', papersPath];
+    const child = spawnSync(process.execPath, args, { encoding: 'utf8' });
+    assert.equal(child.status, 0, child.stderr);
+    assert.match(child.stdout, /Total \(1\/1 papers\):/);
+    assert.match(child.stdout, /no API calls or summary-state changes/);
+    assert.doesNotMatch(child.stdout, /summary available|Model response for/);
+    assert.deepEqual(readFileSync(appPath), appBytes);
+    assert.deepEqual(readFileSync(papersPath), paperBytes);
+    const offline = spawnSync(process.execPath, [...args, '--offline'], { encoding: 'utf8' });
+    assert.equal(offline.status, 0, offline.stderr);
+    assert.equal(offline.stdout, child.stdout);
+    const invalid = spawnSync(process.execPath, [...args, '--clear'], { encoding: 'utf8' });
+    assert.equal(invalid.status, 1);
+    assert.match(invalid.stderr, /--tokens cannot be combined with --clear/);
+    const other = spawnSync(process.execPath, ['src/cli.ts', 'score', '--tokens'], { encoding: 'utf8' });
+    assert.equal(other.status, 1);
+    assert.match(other.stderr, /--tokens requires summarize/);
+  } finally { rmSync(dir, { recursive: true }); }
+});
+
 test('budget boundaries, output reservation, and latch: failed calls still spend budget and skipped outcomes never retry', async () => {
   const { app, papers, digest } = await setup();
   try {
@@ -146,7 +201,7 @@ test('budget boundaries, output reservation, and latch: failed calls still spend
   }
 });
 
-test('HTML unavailable and API unavailable are distinct permanent states; no abstraction fallback', async () => {
+test('manual reruns recover HTML preconditions but never retry attempted API failures', async () => {
   const { app, papers, digest } = await setup(2);
   try {
     const missingId = digest.ranking!.featured[0].id;
@@ -161,9 +216,18 @@ test('HTML unavailable and API unavailable are distinct permanent states; no abs
     assert.match(html, /Summary unavailable: HTML unavailable/);
     assert.match(html, /Summary unavailable: API unavailable/);
     assert.match(html, /Readable abstract/);
-    savePaperText(papers, { ...record, result: { ...record.result, status: 'available', text: body } });
-    await summarizeFeatured(app, papers, digest, config, () => { throw new Error('No retry after fixing HTML or credentials'); }, quiet);
+    // Repeated missing HTML is still a precondition, never an attempted request.
+    await summarizeFeatured(app, papers, digest, config, () => { throw new Error('No requests while HTML remains missing'); }, quiet);
     assert.equal(readSummaries(app, digest)[missingId].status, 'html_unavailable');
+    savePaperText(papers, { ...record, result: { ...record.result, status: 'available', text: body } });
+    let calls = 0;
+    const recovered = await summarizeFeatured(app, papers, digest, config, () => ({ async summarize() { calls++; return { summary }; } }), quiet);
+    assert.equal(recovered.summaries![missingId].status, 'available');
+    assert.equal(recovered.summaries![apiId].status, 'api_unavailable');
+    assert.equal(calls, 1); // Only the previously HTML-blocked paper was eligible.
+    assert.deepEqual(recovered.ranking, digest.ranking);
+    await summarizeFeatured(app, papers, digest, config, () => { throw new Error('Completed/attempted results stay fixed'); }, quiet);
+    assert.equal(calls, 1);
   } finally { app.close(); papers.close(); }
 });
 
@@ -290,7 +354,7 @@ test('run budget stops subsequent requests even if a later smaller paper would f
   } finally { app.close(); papers.close(); }
 });
 
-test('new model/text inputs invalidate reusable summaries, while interrupted runs retain their saved configuration', async () => {
+test('new model/text inputs invalidate reusable summaries and resumed invocations use the latest configuration', async () => {
   const { app, papers, digest } = await setup(1);
   let calls = 0;
   const factory = () => ({ async summarize() { calls++; return { summary }; } });
@@ -298,8 +362,8 @@ test('new model/text inputs invalidate reusable summaries, while interrupted run
     const first = await summarizeFeatured(app, papers, digest, config, factory, quiet);
     const second = await scoreDigest(app, saveDigest(app, [{ ...batch, date: '2026-11-10', papers: batch.papers.slice(0, 1) }]), profiles, embedder, quiet);
     const changedModel = { ...config, llm: { provider: 'cloudflare' as const, model: 'new-model' } };
-    startSummaryRun(app, second, changedModel);
-    const secondResult = await summarizeFeatured(app, papers, second, config, saved => {
+    startSummaryRun(app, second, config);
+    const secondResult = await summarizeFeatured(app, papers, second, changedModel, saved => {
       assert.equal(saved.llm.model, 'new-model');
       return factory();
     }, quiet);
@@ -313,6 +377,38 @@ test('new model/text inputs invalidate reusable summaries, while interrupted run
     const thirdResult = await summarizeFeatured(app, papers, third, config, factory, quiet);
     assert.equal(calls, 3);
     assert.notEqual(thirdResult.summaries![id].cacheKey, first.summaries![id].cacheKey);
+  } finally { app.close(); papers.close(); }
+});
+
+test('latest limits/model apply to eligible papers without resetting spent tokens or retrying existing outcomes', async () => {
+  const { app, papers, digest } = await setup(3);
+  try {
+    const [attempted, skipped, eligible] = digest.ranking!.featured;
+    startSummaryRun(app, digest, { ...config, summaries: { ...config.summaries, run_input_tokens: 100 } });
+    const base = { version: 1, createdAt: new Date().toISOString(), status: 'summarization_error' as const };
+    assert.equal(claimSummary(app, digest, { ...base, paperId: attempted.id }, 100), true);
+    assert.equal(claimSummary(app, digest, { ...base, paperId: skipped.id }, 1), false);
+    claimSummary(app, digest, { ...base, paperId: eligible.id, status: 'html_unavailable' }, 0);
+    const before = readSummaries(app, digest);
+    const current = { ...config, llm: { provider: 'cloudflare' as const, model: 'latest-model' }, summaries: {
+      ...config.summaries, run_input_tokens: 10000, max_completion_tokens: 3072,
+    } };
+    let calls = 0;
+    const result = await summarizeFeatured(app, papers, digest, current, settings => {
+      assert.equal(settings.llm.model, 'latest-model');
+      return { async summarize(_messages, limit) { calls++; assert.equal(limit, 3072); return { summary }; } };
+    }, quiet);
+    assert.equal(calls, 1);
+    assert.deepEqual(result.summaries![attempted.id], before[attempted.id]);
+    assert.deepEqual(result.summaries![skipped.id], before[skipped.id]);
+    assert.equal(result.summaries![eligible.id].status, 'available');
+    assert.equal(result.summaries![eligible.id].provenance!.model, 'latest-model');
+    const run = app.prepare('SELECT config_json, used_input_tokens FROM summary_runs').get()!;
+    assert.equal(JSON.parse(run.config_json as string).summaries.run_input_tokens, 10000);
+    assert.equal(run.used_input_tokens, 100 + result.summaries![eligible.id].estimatedInputTokens!);
+    const lowered = startSummaryRun(app, digest, { ...current, summaries: { ...current.summaries, run_input_tokens: 50 } });
+    assert.equal(lowered.config.summaries.run_input_tokens, 50);
+    assert.equal(lowered.usedInputTokens, run.used_input_tokens);
   } finally { app.close(); papers.close(); }
 });
 

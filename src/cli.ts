@@ -11,7 +11,7 @@ import { loadProfiles } from './profiles.ts';
 import { scoreDigest } from './scoring.ts';
 import { loadConfig } from './config.ts';
 import { retrieveFeaturedText } from './fulltext.ts';
-import { summarizeFeatured } from './summaries.ts';
+import { reportSummaryTokens, summarizeFeatured } from './summaries.ts';
 import { createCloudflareSummaryProvider } from './cloudflare.ts';
 
 const usage = `ruminator — a local arXiv browser
@@ -25,6 +25,7 @@ Usage: npm run <start|fetch|serve|score|text|summarize> -- [options]
   summarize              Summarize featured cached text (paid calls; no retries)
   -v, --verbose          Print full model responses (summarize only)
   --clear                Delete ALL summary state and exit; no API calls (summarize only)
+  --tokens               Print per-paper and total token estimates, then exit; no API calls
   --categories quant-ph  Comma-separated arXiv categories
   --app-db data/app.sqlite       Disposable application state
   --papers-db data/papers.sqlite Downloaded paper information and source metadata
@@ -52,6 +53,7 @@ async function main(): Promise<void> {
       help: { type: 'boolean', short: 'h' },
       verbose: { type: 'boolean', short: 'v', default: false },
       clear: { type: 'boolean', default: false },
+      tokens: { type: 'boolean', default: false },
     },
   });
   if (values.help) { console.log(usage); return; }
@@ -59,6 +61,8 @@ async function main(): Promise<void> {
   if (positionals.length !== 1 || !['start', 'fetch', 'serve', 'score', 'text', 'summarize'].includes(command)) throw new Error(usage);
   if (values.verbose && command !== 'summarize') throw new Error('--verbose requires summarize');
   if (values.clear && command !== 'summarize') throw new Error('--clear requires summarize');
+  if (values.tokens && command !== 'summarize') throw new Error('--tokens requires summarize');
+  if (values.tokens && values.clear) throw new Error('--tokens cannot be combined with --clear');
   if (values['retry-unavailable'] && (command !== 'text' || values.offline)) {
     throw new Error('--retry-unavailable requires text without --offline');
   }
@@ -103,12 +107,14 @@ async function main(): Promise<void> {
       await retrieveFeaturedText(papersDb, digest, { offline: values.offline, retryUnavailable: values['retry-unavailable'] });
     }
     if (command === 'summarize') {
-      if (values.offline) {
+      if (values.tokens) {
+        reportSummaryTokens(papersDb, digest, config);
+      } else if (values.offline) {
         console.log('Offline: using saved summaries; no requests or new outcomes recorded.');
       } else {
         if (existsSync('.env')) loadEnvFile('.env');
         digest = await summarizeFeatured(appDb, papersDb, digest, config,
-          saved => createCloudflareSummaryProvider(saved, { verbose: values.verbose }));
+          settings => createCloudflareSummaryProvider(settings, { verbose: values.verbose }));
       }
     }
   } finally {

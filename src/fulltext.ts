@@ -5,7 +5,7 @@ import type { Paper } from './arxiv.ts';
 import type { Digest } from './digest.ts';
 import { readPaperText, savePaperText } from './store.ts';
 
-export const HTML_EXTRACTOR = 'arxiv-html-v1';
+export const HTML_EXTRACTOR = 'arxiv-html-v2';
 const MAX_HTML_BYTES = 16 * 1024 * 1024;
 
 export interface PaperText {
@@ -33,10 +33,14 @@ export function extractArxivHtml(html: string): string {
   const article = document.querySelector('article.ltx_document');
   if (!article) throw new Error('No arXiv HTML article found');
   for (const node of article.querySelectorAll('script, style, nav, form, button')) node.remove();
-  // Require substantive body sections: an abstract alone is not full text.
-  const sections = article.querySelectorAll('section.ltx_section, section.ltx_appendix');
-  if (!sections.length || [...sections].map(s => s.textContent).join(' ').trim().length < 200) {
-    throw new Error('No usable full-text body sections found');
+  // Some complete papers consist of unsectioned paragraphs. Check for substantive
+  // content without assuming heading/section markup, and don't count an abstract
+  // plus author metadata or references as proof that the full body is present.
+  // Use a clone so this check does not discard metadata/references from the output.
+  const body = article.cloneNode(true) as typeof article;
+  for (const node of body.querySelectorAll('.ltx_title_document, .ltx_authors, .ltx_dates, .ltx_abstract, .ltx_bibliography, .ltx_pagination, header, [role="doc-abstract"], [role="doc-bibliography"]')) node.remove();
+  if (body.textContent.replace(/\s+/g, ' ').trim().length < 200) {
+    throw new Error('No substantive full-text body found');
   }
   for (const math of article.querySelectorAll('math')) {
     const tex = math.getAttribute('alttext') || math.querySelector('annotation[encoding="application/x-tex"]')?.textContent;
@@ -133,7 +137,8 @@ export async function retrieveFeaturedText(db: DatabaseSync, digest: Digest, {
         const wait = minIntervalMs - (Date.now() - lastRequest);
         if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
         lastRequest = Date.now();
-        let html: string | null = null;
+        // A failed manual download must not destroy HTML available for re-extraction.
+        let html: string | null = cached?.html ?? null;
         try {
           html = await downloadHtml(sourceUrl, fetcher);
           result = extraction(paper, html, sourceUrl, new Date().toISOString());

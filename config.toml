@@ -36,11 +36,11 @@ request_overhead = 64
 
 [summaries]
 # Estimated INPUT tokens; cached summaries consume no request budget.
-run_input_tokens = 250000
-paper_input_tokens = 100000
+run_input_tokens = 500000
+paper_input_tokens = 150000
 # Includes visible output and reasoning tokens for the initial OpenAI model.
 max_completion_tokens = 2048
 # Explicit context allowance, including reserved completion tokens.
 # This is our application limit, not a claim about every model's context window.
-context_tokens = 102048
+context_tokens = 152048
 # No retries: failures and budget skips stay fixed for this digest.
