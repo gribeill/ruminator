@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { fetchBatch, type Batch } from './arxiv.ts';
-import { archivedBatch, cachedDownload, latestBatches, latestDigest, saveDigest, saveDownload } from './store.ts';
+import { archivedBatch, cachedDownload, saveDigest, saveDownload } from './store.ts';
 import type { Digest } from './digest.ts';
 
 /** Use arXiv's timezone for download freshness, independently of batch dates. */
@@ -18,9 +18,9 @@ interface LoadOptions {
 }
 
 /** Cache each category once per day, including across different category sets. */
-export async function loadDailyDigest(papersDb: DatabaseSync, appDb: DatabaseSync, categories: string[], {
+export async function loadDailyBatches(papersDb: DatabaseSync, categories: string[], {
   refresh = false, now = new Date(), download = fetchBatch, log = console.log,
-}: LoadOptions = {}): Promise<Digest> {
+}: LoadOptions = {}): Promise<Batch[]> {
   const batches: Batch[] = [];
   for (const category of categories) {
     const cached = cachedDownload(papersDb, category);
@@ -35,14 +35,9 @@ export async function loadDailyDigest(papersDb: DatabaseSync, appDb: DatabaseSyn
     saveDownload(papersDb, { batch, checkedAt: now.toISOString() });
     batches.push(archivedBatch(papersDb, category, batch.date)!);
   }
-  return saveDigest(appDb, batches);
+  return batches;
 }
 
-/** Offline reconstruction makes the application DB disposable during development. */
-export function loadSavedDigest(papersDb: DatabaseSync, appDb: DatabaseSync, categories: string[]): Digest {
-  const saved = latestDigest(appDb, categories);
-  if (saved) return saved;
-  const batches = latestBatches(papersDb, categories);
-  if (!batches.length) throw new Error('No saved announcement batch for these categories. Run npm run fetch first.');
-  return saveDigest(appDb, batches);
+export async function loadDailyDigest(papersDb: DatabaseSync, appDb: DatabaseSync, categories: string[], options: LoadOptions = {}): Promise<Digest> {
+  return saveDigest(appDb, await loadDailyBatches(papersDb, categories, options));
 }

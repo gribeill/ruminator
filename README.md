@@ -1,76 +1,129 @@
 # ruminator
 
-A local, minimal arXiv browser, with a small ASCII cow to keep you company while you ruminate. Downloads the latest `quant-ph` announcement feed, saves it in SQLite, and displays:
+A local, minimal arXiv browser for discovering papers in the **latest announcement batch**, not building a personal copy of arXiv. A small ASCII cow keeps you company while you ruminate.
 
-- Six featured papers: four relevance picks, one adjacent topic, and one weighted-random wildcard, with titles, optional full-text AI summaries, abstracts, and PDF links.
-- Every remaining paper in a diversity-aware order, as an expandable title revealing its abstract and PDF link.
-- Compact authors (up to four; first two … last two for longer lists), with all names in a tooltip.
-- Understated + / − relevance votes beside the PDF/arXiv links for every paper.
+The reading page contains:
 
-Selections and display order are fixed once ranking is saved for an announcement batch. Math in titles and abstracts is rendered with KaTeX, including `$…$`, `$$…$$`, `\(…\)`, and `\[…\]`. Styles and fonts are served locally, with no CDN or browser JavaScript. Unsupported/malformed math stays visible as escaped source text. Saved relevance scores appear beside each title to two decimal places; rounding is display-only and does not change ranking. Full-text summaries are generated only by an explicit paid command. Votes affect future ranking runs, never an already-saved ranking.
+- Six featured papers: four **Selected**, one **Adjacent**, and one **Wildcard**.
+- Every remaining posting in a diversity-aware order, with expandable abstracts and links.
+- Compact authors, two-decimal relevance scores, and optional + / − relevance votes.
+- Featured **Abstract** and **AI summary** disclosures, both closed by default, in that order. The summary has a light-grey background without a left border; its marker aligns with Abstract. Links and votes remain outside both disclosures.
 
-The standalone preview loosely matches the personal site's Hugo **XMin** theme: an 800px reading column, Optima/Candara/Calibri system font stack, light-grey panels, dashed separators, and browser-default link/visited colours. It retains ruminator's cow and reading layout without copying the site's navigation/footer or loading remote theme assets.
+The current ranking stays fixed while you read. There is **one global listing**, no history browser, and no unread backlog. When another listing is successfully published, the old one is discarded. Papers themselves remain available on arXiv; save worthwhile papers or notes in your own bibliography/notebook.
 
-## Run locally
+## Manual workflow
 
-Requires **Node.js 24+** (uses built-in TypeScript support and SQLite).
+Requires **Node.js 24+**, for built-in TypeScript and SQLite support.
 
 ```sh
 npm install
-npm start
+npm run generate          # Fetch and rank locally, publish, then exit
+npm run serve             # Browse http://127.0.0.1:3000
 ```
 
-Open **http://127.0.0.1:3000**. Stop with Ctrl-C. Startup reuses each category's downloaded feed for the current US Eastern calendar day, downloading only missing or stale feeds. Restarting the app, browsing, and refreshing the page do not repeatedly contact arXiv. On first scoring, startup downloads the pinned BGE-small model assets into `data/models/`, then computes embeddings locally on CPU. Subsequent runs reuse saved scores without loading the model. SQLite may emit an experimental-feature warning on some Node versions.
+Or `npm start` to generate without paid summaries and then serve. Stop the server with Ctrl-C. It follows newly published listings on page refresh, without a restart, network retrieval, or inference on page requests.
 
-Add other arXiv listings with comma-separated category IDs:
+On first scoring, the pinned BGE-small assets download into `data/models/`. Later runs reuse model assets and compatible cached embeddings. The source is the RSS announcement batch, not papers submitted on the machine's calendar date. Weekends and holidays can leave the latest batch unchanged; its actual announcement date stays visible.
+
+For optional full-text AI summaries:
 
 ```sh
-npm start -- --categories quant-ph,cs.ET --port 3001
+npm run generate -- --summarize  # Explicitly permits paid calls for a new/unfinished listing
 ```
 
-Cross-listed papers appear only once. Downloads are cached per category, so adding a category doesn't download today's already-cached categories again. All requested categories must have the same announcement date; if feeds are updating at different times, retry later with `--refresh`.
+This retrieves featured HTML, makes separate sequential summary requests, and then publishes. Without `--summarize`, generation does not retrieve full text or call a summary provider. There is no scheduler, cron job, hosted API, or deployment infrastructure in this version.
 
-Download once (or reuse today's download) without starting a server, or browse saved data without internet access:
+### Repeated generation and explicit replacement
+
+Generating an already-published announcement date/category set is a **no-op**, even with `--summarize`: it does not rerank, fetch featured text, or make paid calls. Changed interests/configuration affect the next listing, not the current one.
+
+To deliberately regenerate the same batch:
 
 ```sh
-npm run fetch -- --categories quant-ph
-npm run serve -- --categories quant-ph
+npm run generate -- --clear              # Rebuild ranking; no paid calls
+npm run generate -- --clear --summarize  # Rebuild and regenerate summaries; potentially billable
 ```
 
-To explicitly check arXiv again within the same day:
+`--clear` resets working membership, ranking, feedback/configuration snapshots, full-text caches, summaries, outcomes, and budgets. It preserves active votes, useful embeddings, and downloaded model assets. It uses the current feed cache unless `--refresh` is also specified. It **does not remove the visible publication before its replacement succeeds**. If interrupted, resume with ordinary `generate` (and `--summarize` if desired); repeating `--clear` deliberately discards the partial work again.
+
+The current page remains available after feed, model, or local-credential failures. Missing HTML, refused/failed API responses, and budget skips produce explicit unavailable summaries rather than blocking an otherwise readable listing. First publication requires a complete ranking; there is no public unranked staging preview.
+
+### Categories, caching, and offline operation
 
 ```sh
-npm run fetch -- --refresh
-# Or download again and start the preview:
-npm start -- --refresh
+npm run generate -- --categories quant-ph,cs.ET
+npm run generate -- --refresh
+npm run generate -- --offline
+npm run generate -- --offline --clear
+npm run serve -- --port 3001
 ```
 
-The daily cache tracks **download time**, not announcement date: weekends can return the same announcement batch on successive days. A download early in the day can miss a later feed update; use `--refresh` if needed. Refreshing bypasses the download cache but never rewrites an already-published digest. Successful downloads remain cached even if a different category fails; failed requests do not mark that category as checked.
+Category feeds are cached once per US Eastern calendar day. `--refresh` checks them again; it is not permission to replace an existing ranking. All requested categories must report the same announcement date. Mismatched dates or failed downloads leave the publication unchanged; successful category downloads remain cached for another attempt. Generation refuses a batch older than the current publication.
 
-Storage is split into two databases (both ignored by Git):
+There is one listing across **all** category combinations: generating a different combination replaces it. `serve` always displays the global current publication. The lower-level commands below act on the single working listing, not a historical category-specific digest.
 
-- **`data/papers.sqlite`** — downloaded paper information, source metadata, announcement archives, and download freshness. Keep this file when changing application schemas.
-- **`data/app.sqlite`** — generated digests, embeddings, scores, summary runs/outcomes, reusable successful summaries, vote history, and frozen feedback inputs.
+`--offline` uses current cached feeds and model assets only. It cannot be combined with `generate --summarize`. There is no fallback to an older common-date archive if current feeds disagree. `serve` is always offline and requires a published listing.
 
-Override them independently with `--papers-db data/another-papers.sqlite` and `--app-db data/another-app.sqlite`. They must be different files. Category combinations have separate saved digests. Restart the preview server after downloading another batch; a running preview always shows its original snapshot. If downloading fails, the command reports the error rather than silently showing stale data; use `serve` explicitly to view saved data.
+### Individual development commands
 
-## Configuration
+```sh
+npm run fetch                         # Fetch into staging, without publishing
+npm run score -- --offline            # Rank staging and publish without summaries
+npm run text                          # Retrieve HTML for working featured selections
+npm run text -- --offline             # Inspect/re-extract cached HTML, no downloads
+npm run text -- --retry-unavailable   # Explicitly retry failed HTML retrieval
+npm run summarize -- --tokens         # Full-prompt input estimates and output allowances only
+npm run summarize                     # Explicit paid summaries, then publish
+npm run summarize -- -v               # Full responses for actual requests; credentials redacted
+```
 
-Edit **[config.toml](config.toml)** for model documentation, score weights, and local summary-token counting settings. All commands accept `--config path/to/config.toml`; the default is the file in the current working directory. Invalid, missing, or unknown settings fail explicitly.
+`text` does not publish or change ranking. `score` publishes the working ranking; `summarize` publishes after recording its outcomes. These commands also let you add summaries explicitly after an unsummarized publication; `generate --summarize` alone remains a no-op for that published batch.
 
-- **LLM:** `cloudflare` with configurable model ID, initially `openai/gpt-6-luna`. Changing provider away from Cloudflare is not yet supported. Only `summarize` makes paid requests; full-text retrieval is a separate explicit command below.
-- **Embeddings:** documents the existing pinned BGE model/revision, q8 precision, and CLS pooling. Changing embedding configuration is not yet supported and is rejected, rather than silently using incompatible preprocessing or caches.
-- **Score weights:** nonnegative semantic/keyword/feedback weights must sum to 1. They apply to new rankings and are saved with them; existing ranked digests and embedding caches are unchanged. Other selection/MMR constants remain in `src/ranking.ts`.
-- **Feedback:** `[feedback]` sets raw cosine cutoffs for future runs: `min_similarity = 0.90`, `near_duplicate_similarity = 0.95`. These are conservative experimental defaults, not calibrated constants. Thresholds and votes are captured when a new scoring run starts and retained if it resumes.
-- **Tokenizer:** `gpt-tokenizer` runs `o200k_base` entirely locally, with no model weights, downloads, or inference calls. This is an **approximation**, not a verified tokenizer match or upper bound for `gpt-6-luna`. Configurable text-count headroom and per-message/request allowances account conservatively for unknown framing. Other implementations/encodings are not yet supported.
+`summarize --tokens` includes all featured papers, even those with cached summaries. It flags missing HTML/partial totals and never loads credentials, calls APIs, or changes budgets/outcomes. `summarize --offline` also leaves summary state untouched.
 
-The `estimatePromptTokens(messages, config.tokenizer)` function in `src/tokenizer.ts` counts the complete supplied message text, including instructions, without truncation. It returns raw text tokens and an estimated input total (`ceil(text tokens × safety multiplier) + message allowances + request allowance`), explicitly marked approximate. It treats control-token-looking paper text as ordinary data. The summary loop applies the `[summaries]` limits to this estimate, reserving output space separately.
+The narrower `summarize --clear` command still clears only summary state and exits without API calls or source-database access. If the working listing is published, its summary display is cleared too. Regeneration requires a separate command and may incur charges. Use `generate --clear` for a full listing reset instead.
 
-Keep Cloudflare credentials in the ignored `.env`, not `config.toml`. Only online `summarize` loads `.env`; existing environment variables take precedence. Set `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, and `CLOUDFLARE_GATEWAY_ID`. The adapter uses Cloudflare's account REST chat-completions endpoint with one attempt and no model fallback.
+Only one writing generation/development command may run at a time for an app database. A local process lock prevents overlapping clears and paid calls; an interrupted process's lock can be reclaimed when its process is no longer alive. The reading server can stay running. Old browser vote forms are rejected after publication replacement: reload the current page before voting.
 
-## Editing research interests
+## Ephemeral storage and retention
 
-Edit **[interests.md](interests.md)**, the sole profile configuration file. It contains six independent profiles; combining the files does not combine their scores or interests.
+- **`data/app.sqlite`**: one self-contained publication, one working generation (which may be the published generation), useful embeddings, current vote memory, and current generation/summary provenance.
+- **`data/papers.sqlite`**: current per-category feed caches, working/current paper metadata, and current/working full-text caches. This is a working cache, not an archive.
+- **`data/models/`**: pinned model assets, independent of listing lifecycle.
+
+Override the database paths with `--app-db` and `--papers-db`; they must be different files. Use one app/source pair for normal operation. Separate experiments sharing a source DB should not run concurrently.
+
+Publication is an atomic application-database replacement. Source cleanup follows it and is safe to repeat after interruption. Subsequent generation prunes obsolete batches, rankings, text, summaries, budgets, and unused embeddings. Embeddings are retained only for current/working paper and profile inputs, active voted examples, and frozen feedback needed by unfinished ranking. This can reuse vectors without retaining old reading artifacts. Successful summaries are reusable within the retained working state, not a permanent cross-day archive.
+
+### Votes expire after 365 days
+
+Votes mean **more/less relevant to your interests**, not scientific quality. The selected + / − button can be clicked again to clear a vote, or the other button to change it. Votes share a base arXiv ID across versions.
+
+Manual generation compacts vote changes to the latest active vote per paper and discards votes **older than 365 days since their last explicit change**, with their no-longer-needed metadata and vectors. The exact 365-day boundary is retained. Changing a vote renews its lifetime; reading a paper, propagating feedback, or resubmitting the same desired state does not. Cleared and superseded vote events are removed during pruning. Timestamped metadata is also removed from frozen feedback provenance when expired, without changing published scores/order.
+
+There is no background expiry job. With no manual generation, existing disk state remains in place. Current/working paper metadata is retained because it is needed for those listings, independently of vote expiry.
+
+Active voted examples retain title and abstract so they can be embedded again in a future compatible model space. New votes affect subsequent generation, never an existing ranking. Profiles, weights, and active votes are frozen before inference in the manual generation pipeline; interrupted runs resume those inputs. Expired feedback is removed even from a very old interrupted run.
+
+## Configuration and research interests
+
+Edit **[config.toml](config.toml)**, or pass `--config path/to/config.toml`. Missing, invalid, and unknown settings fail explicitly.
+
+- **LLM:** Cloudflare, with a configurable model ID. Only `summarize` and `generate --summarize` authorize paid calls. Provider changes away from Cloudflare are not supported yet.
+- **Embeddings:** pinned BGE-small model/revision, q8 CPU inference, CLS pooling, normalized 384-dimensional vectors. Unsupported embedding configuration changes are rejected.
+- **Score weights:** nonnegative semantic/keyword/feedback weights summing to 1; apply to new rankings.
+- **Feedback:** configurable raw cosine thresholds, initially 0.90 for propagation and 0.95 for near-duplicate suppression.
+- **Tokenizer and summaries:** local `gpt-tokenizer`/`o200k_base`, configurable framing/headroom, input/context limits, and completion allowance. Estimates are approximate, not guaranteed dollar caps.
+
+Keep credentials in the ignored `.env`, never in TOML or saved/public artifacts:
+
+- `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_GATEWAY_ID`
+
+Only explicit online summary generation loads `.env`; existing environment variables take precedence. Missing credentials are a recoverable precondition, not a model attempt. No cross-provider fallback is implemented.
+
+Edit **[interests.md](interests.md)**, the sole research-interest file, or use `--profiles path/to/interests.md`:
 
 ```markdown
 ## Superconducting Quantum Computing {#superconducting-quantum-computing}
@@ -86,178 +139,63 @@ Edit **[interests.md](interests.md)**, the sole profile configuration file. It c
 ### Negative examples
 ```
 
-Keep each `{#id}` unique and stable when renaming or rearranging sections. Profile IDs are lowercase letters/digits separated by hyphens. Document order is for editing convenience, not ranking priority.
+Keep each explicit ID unique and stable when renaming/reordering headings. Titles and Subjects supply semantic inputs. Keywords are optional phrase groups with semicolon-separated aliases. Positive/negative example headings are currently placeholders and do not affect ranking; HTML comments are ignored. Profile file order does not change ranking priority.
 
-- **Subjects:** required semantic interest bullets; only these and the display title feed embeddings.
-- **Keywords:** optional explicit lexical signals, one phrase/alias group per bullet. Missing/empty lists are neutral; see scoring details below.
-- **Positive examples:** space for paper IDs/URLs and why they are relevant.
-- **Deprioritize / Negative examples:** space for topics or recommendations that are less relevant, with reasons—not judgments of paper quality or scientific null results. These and positive examples are reserved for future use and currently do not affect ranking.
+## Ranking and reading
 
-HTML comments and empty placeholders are ignored. Scientifically interesting negative/null results remain welcome; these profiles are not exclusion filters. Existing ranked digests remain fixed after edits. Use `--profiles my-interests.md` to select a different single Markdown file; directory-based profiles are no longer supported.
-
-## Local scoring and ranking
-
-`npm start` scores and ranks an unranked digest automatically. To score the latest saved digest without downloading arXiv data or starting a server:
-
-```sh
-npm run score
-npm run serve
-```
-
-After the first model download, inference can run fully offline:
-
-```sh
-npm run score -- --offline
-npm start -- --offline
-```
-
-`start --offline` uses the latest saved digest, never checks arXiv, and requires cached model assets if scoring is needed. If the application DB has been recreated, offline commands rebuild an unscored digest from the latest archived announcement shared by all requested categories. `serve` neither loads a model nor computes missing scores. Use `--profiles my-interests.md` to choose a different profile file.
-
-The baseline is **BGE-small-en-v1.5**, using the pinned `Xenova/bge-small-en-v1.5` ONNX conversion, q8 weights, CLS pooling, and normalized 384-dimensional vectors. Profiles use only their titles and Subjects bullets, with BGE's retrieval-query instruction. Papers use titles and abstracts. Long inputs are split into sentence-oriented chunks within the 512-token limit, repeating the title, then their vectors are averaged and renormalized.
-
-The combined relevance score displayed on the page is:
+The initial relevance score is:
 
 ```text
-# Default weights from config.toml:
-relevance = 0.60 * semantic + 0.25 * keywords + 0.15 * feedback
+0.60 × semantic + 0.25 × keywords + 0.15 × feedback
 ```
 
-- **Semantic:** maximum cosine similarity across profiles, mapped by `(cosine + 1) / 2` to a fixed [0, 1] scale. No daily min-max stretching.
-- **Keywords:** only the explicit `### Keywords` bullets in each profile. Each bullet is one phrase or group of semicolon-separated aliases, e.g. `tunable coupler; tunable coupling`. Match whole normalized phrases (case, punctuation/hyphens, simple plurals), never partial coverage or inferred Subjects words. Title hits count twice as much as abstract hits; aliases and repetitions contribute at most once per group. Evidence saturates as `1 - exp(-evidence / 2)`. A missing/empty keyword list scores a neutral **0.5** for that profile; a configured list with no hits scores **0**. Take the strongest profile score, including neutral values (an unspecified profile therefore gives a 0.5 floor).
-- **Feedback:** a neutral **0.5** without nearby voted examples. Similar upvotes raise it and downvotes lower it, using the configurable thresholds and conservative weighting below.
+- **Semantic:** maximum cosine similarity across interest profiles, mapped to [0, 1] by `(cosine + 1) / 2`, without daily rescaling. Profiles use BGE's query instruction. Papers use title/abstract, split into token-bounded sentence chunks with the title repeated; normalized chunk vectors are averaged and renormalized.
+- **Keywords:** whole normalized explicit phrases, not inferred Subjects words or partial matches. Aliases/repetitions count once per group; title hits count twice abstract hits. Evidence saturates as `1 - exp(-evidence / 2)`. Empty lists are neutral 0.5; configured lists without hits score 0. Take the strongest profile, including neutral values.
+- **Feedback:** nearby votes, newest first, with duplicate examples suppressed. For similarity `c` above cutoff `t`, weight `w = (c - t) / (1 - t)`. The component is `0.5 + 0.5 × sum(w × vote) / (1 + sum(w))`. No nearby evidence stays neutral 0.5; one perfectly matching up/down vote gives 0.75/0.25.
 
-Combined relevance scores are displayed to two decimal places for featured and remaining papers. A semantic-only preview displays semantic similarity instead; unscored papers have no number. Components and closest semantic profiles remain available in the application's saved SQLite snapshots, not in page tooltips. These numbers are not probabilities, quality assessments, or percentiles; BGE similarities naturally occupy a narrow high-valued band.
+These are experimental relevance measures, **not probabilities or scientific-quality assessments**. Display rounding to two decimal places does not change stored scores or order. A semantic-only development view can display semantic similarity; unscored papers have no number.
 
-### Selection and order
+- **Selected:** four high-relevance papers with a small redundancy penalty.
+- **Adjacent:** semantic connections with lower keyword overlap and less represented topics.
+- **Wildcard:** a seeded equal mixture of uniform and semantic-softmax sampling, not constrained by keyword relevance.
+- **Other postings:** greedy MMR ordering against the featured set and then previously ordered papers, with small seeded jitter. This deliberately does not sort monotonically by relevance.
 
-- **Selected:** greedily choose four high relevance scores with a small redundancy penalty.
-- **Adjacent:** favor semantic relevance with low keyword overlap, less similarity to the featured set, and a bonus for an unrepresented profile.
-- **Wildcard:** draw from an equal mixture of uniform sampling and softmax sampling over semantic scores (initial temperature 0.05). No keyword weighting or relevance cutoff. Exclude already selected papers and avoid near-duplicates.
-- **Other postings:** greedy Maximal Marginal Relevance, `0.7 * relevance - 0.3 * maximum_similarity + jitter`, comparing initially against all six featured papers and then against each newly ordered paper. Jitter is fixed per paper/date and bounded by ±0.005. This order intentionally does **not** decrease monotonically by relevance score.
+Featured selections avoid identical titles and cosine similarity ≥0.95 when alternatives exist; tiny/redundant batches relax this to fill up to six distinct IDs. Every remaining paper stays available. Constants live in `src/ranking.ts`.
 
-Random draws are date/category-seeded; candidate IDs break ties deterministically. Featured slots avoid identical titles and cosine similarities ≥0.95 whenever alternatives exist. Very small or redundant batches relax this preference to fill up to six distinct IDs. Every remaining paper stays available. Defaults are collected in `src/ranking.ts` and saved with each ranking; they are initial settings, not calibrated estimates of scientific importance.
+Math is rendered server-side with KaTeX, local styles/fonts, escaped paper text, disabled trust features, and escaped-source fallback. No browser JavaScript or CDN is needed. The standalone 800px reading column loosely follows Hugo's XMin theme, without importing site navigation or remote assets.
 
-Embeddings are cached in SQLite by input content and model/preprocessing fingerprint. Changed Subjects/title or paper text require new vectors; keyword-only edits and ignored negative sections do not. Explicit keyword lists are snapshotted separately with each ranking. Semantic snapshots retain their profile/model context. The first completed ranking saves score components, featured roles, and the entire remaining order; later profile/model/configuration changes apply only to future digests. Interrupted scoring reuses completed vectors and never publishes a partial ranking. A fetch-only or not-yet-ranked digest has a temporary random preview; run `score` to replace it with its first fixed ranked view. To experiment with new keyword lists for the same saved batch, use a fresh `--app-db` path with `--offline`, preserving the existing digest and paper cache.
+## Full text and summaries
 
-## Voting and future recommendations
+Text comes only from versioned `https://arxiv.org/html/{id}v{version}` pages, never abstract-only substitutions. TeX/PDF extraction is deferred. Retrieval is sequential, at least three seconds between starts, with 30-second timeouts and a 16 MiB download limit. Both successes and failures are cached while relevant; failed HTML requires explicit retry. Cached HTML can be re-extracted offline when the extractor changes.
 
-Start or restart `npm run serve` (or `npm start`) to use the local voting controls. Every paper has + / − buttons on the same action row as its PDF/arXiv links. The row stays visible for the featured six, outside their collapsed abstracts; remaining postings reveal their links and buttons only when expanded. Votes mean **more/less relevant to your interests**, not scientific quality. The selected button shows your current vote: click it again to clear, or click the other to change. Forms work without browser JavaScript and redirect back to the same paper anchor. No nearby-paper explanations are displayed; the number beside each title is its saved relevance score, unchanged by new votes.
+Extraction keeps scientific prose, equation TeX, captions/tables, and appendices, without executing scripts or fetching assets. It accepts unsectioned articles but requires substantive body content beyond title/author/abstract/bibliography metadata. Information present only in figure images is not recovered.
 
-Votes share one **base arXiv ID across all versions**, announcement batches, and category combinations. The application database stores an append-only history of changes with timestamps and the paper metadata you voted on. Repeated submissions of the same desired state do not duplicate events. Current votes refresh independently of the saved paper data, selections, summaries, and ordering. The local POST endpoint accepts only papers in the served digest, checks a per-server form token and same-origin/loopback headers, and never contacts a model or recomputes rankings.
+The summary prompt requests a short factual description grounded in the complete cached text. Formatting validation cannot guarantee factual accuracy: read the paper for scientific conclusions. The page distinguishes missing HTML, API failure, exhausted token budget, and summarization errors.
 
-At the start of a new scoring run, active votes and feedback thresholds are captured before any model initialization or inference. Votes arriving afterward affect only subsequent runs; an interrupted run resumes its original snapshot. Published rankings are never updated by votes, clearing votes, or changing thresholds. Voted title/abstract inputs are embedded using the **same provider/model fingerprint as the new papers**, reusing compatible vectors from cache. Frozen feedback inputs, vectors, model identity, and configuration remain saved for inspection/reproduction.
+Default limits are 250,000 estimated input tokens per run, 100,000 per paper, 2,048 completion tokens, and a 102,048-token application context allowance. Full prompts are counted locally without truncation. Output allowance is reserved separately. These estimates are not a verified tokenizer match for every configured model or hard spending limits.
 
-For each new paper, retain voted examples whose raw cosine similarity is at least `min_similarity` (default **0.90**). Process newest votes first; drop examples with the same base ID or similarity at least `near_duplicate_similarity` (default **0.95**) to an already retained example. This prevents near-duplicates from multiplying evidence; the latest vote wins in conflicting duplicate groups. Unrelated votes have no effect. These are simple greedy groups, not a topic classifier.
+Each uncached paper gets a separate sequential request. Before a request, SQLite durably claims it and reserves estimated input. **Attempted requests are never automatically retried**, including after interruption; errors do not refund reservations. Missing HTML can become eligible after manual retrieval, since it was not an attempt. Successful current cache entries cost no new budget. Exceeding the remaining run budget latches subsequent uncached papers as skipped. Previously recorded attempts/skips remain fixed until an explicit clear. Current summary configuration applies to still-eligible papers without resetting spent input.
 
-For each retained example, `w = (cosine - min_similarity) / (1 - min_similarity)`; the feedback component is `0.5 + 0.5 * sum(w * vote) / (1 + sum(w))`, with vote values +1/-1. The extra neutral pseudocount shrinks sparse evidence toward 0.5: one perfectly matching up/down vote gives 0.75/0.25, and evidence exactly at the cutoff has zero weight. The existing configurable feedback weight (default **0.15**) then enters combined relevance. This initial rule should be evaluated against your judgments rather than treated as calibrated relevance probability.
-
-Keep/backup `data/app.sqlite` if you want to preserve votes. Application DB resets delete vote history as well as generated state; `summarize --clear` does **not** delete votes or feedback snapshots.
-
-## Featured-paper text cache
-
-After saving a ranking, download HTML text for **only its six featured papers** (or fewer for a small batch):
-
-```sh
-npm run text
-npm run text -- --offline          # Inspect cached results without network access
-npm run text -- --retry-unavailable # Explicitly retry failures, not successful downloads
-```
-
-This command uses the latest saved digest for `--categories`, honors the usual database paths, and requires a saved ranking. It does not fetch RSS, load an embedding model, rescore, or change selections/order. `start`, `fetch`, `score`, and `serve` do not automatically retrieve full text; page requests remain offline.
-
-Text comes only from versioned `https://arxiv.org/html/{id}v{version}` pages. **TeX source and PDF extraction are deferred** until HTML coverage proves insufficient. Missing/unusable HTML leaves an explicit unsummarized status in the cache and command output; the abstract stays readable, but is never substituted as full text. The summary command snapshots missing/unusable HTML as a visible summary-unavailable outcome.
-
-The paper database caches raw HTML, extracted text, SHA-256 text hashes, source URL, extraction version, and retrieval timestamps by arXiv ID/version. These survive application DB resets. Both successes and failures are reused on reruns, including across announcement dates; failures do not automatically expire. Use `--retry-unavailable` if a page becomes available later. A failed manual retry does not prevent another manual retry, and a network failure preserves any previously downloaded HTML for future re-extraction. Offline cache misses are reported without being persisted as failures. Cached HTML can be re-extracted locally after an extractor-version change, without another request.
-
-Extraction retains article headings, paragraphs, captions, tables, appendices, and equation TeX where supplied. Numbered sections are not required: unsectioned papers are accepted too. It requires an arXiv article container and at least 200 characters of substantive body text outside document-title/author/date metadata, the abstract, and bibliography. Those excluded parts are only ignored for this check, not discarded from the extracted paper. It excludes site navigation and scripts, never executes JavaScript or downloads page assets, and rejects abstract-only pages. It does not recover information contained only in figure images. Requests are sequential with at least three seconds between starts, have a 30-second timeout, and reject downloads larger than 16 MiB rather than truncating them.
-
-## Featured-paper summaries
-
-With a saved ranking and cached HTML text:
-
-```sh
-npm run summarize -- --tokens # Estimate-only: per-paper counts and total, no API calls
-npm run summarize           # Paid: up to six separate, sequential model requests
-npm run summarize -- -v     # Or --verbose: full API response per newly requested paper
-npm run serve               # Restart preview to display the saved outcomes
-```
-
-This requests a small summary about the question, approach, and principal result/qualification, grounded in the **complete cached paper text**, not just its abstract. Featured papers show the “Abstract” disclosure first, followed by an “AI summary” disclosure, both collapsed by default. The AI summary retains a light-grey background without a left border; its disclosure marker aligns with the abstract's. PDF/arXiv links and voting controls remain visible outside both disclosures, including when a summary is unavailable. Output formatting is checked, but factual accuracy and exact sentence count cannot be guaranteed; read the paper for scientific conclusions. No evidence schema or personalized relevance text is generated.
-
-The page distinguishes **exhausted token budget**, **API unavailable**, **HTML unavailable**, and **summarization error**. Before the command runs, it says “Summary unavailable: not generated.” Neither summary text nor availability can change scores, featured picks, or ordering. Other postings have no summaries.
-
-`summarize --tokens` uses the latest config and cached full text to report raw prompt-text tokens, estimated input with framing/headroom, and completion allowances per paper and in total. It counts all saved featured papers, including ones with cached summaries, as if generating them afresh—not the cost of the next actual run. Missing HTML is listed as unavailable and makes the total explicitly partial. Completion allowances are caps, not predictions of output usage. This mode does not load credentials, call APIs, reserve budget, or change summary state; it also works with `--offline` and cannot be combined with `--clear`.
-
-Default limits in `config.toml` are 250,000 estimated input tokens per run, 100,000 per paper, and 2,048 completion tokens per request (including reasoning for the initial OpenAI model). A 102,048-token application context allowance reserves the completion space; it is not a guarantee about arbitrary models. Oversized papers are skipped, never truncated. Once the next eligible request would exceed the remaining run input budget, subsequent uncached requests are skipped even if smaller. Successful cache hits cost no new request tokens. These estimated limits are not hard dollar caps.
-
-**No retries of attempted model requests**, including after configuration fixes or process interruption. Missing/unusable HTML is a precondition, not an attempted model request: after repairing/retrieving text, manually rerun `npm run summarize` and those papers become eligible without clearing summaries. This never retries API failures, interrupted calls, budget skips, or successful summaries. Each explicit invocation reads the latest `config.toml` (or `--config` file) for eligible papers and records those settings with the run. Existing outcomes are not regenerated when the model, prompt, or limits change; only HTML-precondition outcomes may be replaced on a manual rerun. Before each request, SQLite reserves its estimated input and records an interrupted/error placeholder atomically. If the process stops during the call, rerunning will not resend it; it can continue with papers never attempted. Reserved input is not refunded for errors. Budget use survives interrupted runs and configuration changes, so restarting does not replenish it. New requests use the current run ceiling minus previously reserved input; raising that ceiling can permit still-eligible papers, while lowering it does not erase spent tokens. Previously budget-skipped outcomes remain fixed. The first explicit summary run adds outcomes to an already-ranked digest, but reruns never rewrite recorded outcomes.
-
-Successful summaries are also cached across digests by paper ID/version/title, extracted-text hash and extraction version, prompt version, provider/model, and output allowance. The cache does not depend on profiles or selection roles. Actual returned model and token usage are stored when available. A new digest has its own run and failure outcomes; only successful summaries are shared. Deleting the application DB deletes both outcomes and caches and can cause paid calls again—do not reset it casually.
-
-To deliberately discard summary state, use the explicit **clear-only** command:
-
-```sh
-npm run summarize -- --clear   # Deletes summaries/outcomes/budgets and exits; no API calls
-npm run summarize -- -v        # Separate, billable regeneration when you choose
-```
-
-`--clear` clears **all digests'** summary outcomes, successful-summary cache entries, and recorded run configurations/budgets in the selected `--app-db`, regardless of `--categories`. Rankings, embeddings, downloaded HTML, and other data are preserved. It does not open the paper database, load credentials, or generate summaries. It works without a saved digest, is never called automatically, and is rejected on other commands. Stop any in-progress summarization before clearing, and restart the preview afterward. This is an intentional override of the fixed-outcome/no-retry policy; subsequent regeneration may incur new charges.
-
-`start`, `fetch`, `score`, `text`, `serve`, and page refreshes never call the summary API. `summarize --offline` is a no-network/no-write mode that leaves saved outcomes intact, unless the explicit `--clear` option is also supplied. Verbose mode prints full responses only for actual requests, not cache hits; raw responses are not stored. It excludes request headers and defensively redacts credentials, but model output itself may contain paper text, so treat redirected logs accordingly.
-
-## What counts as “today”?
-
-The source is [arXiv's category RSS feed](https://rss.arxiv.org/rss/quant-ph), not a search for papers submitted on the machine's calendar date. The page shows the feed's announcement date in arXiv's US Eastern timezone. It may be the latest available batch rather than today's date, particularly around weekends and holidays. RSS provides the current batch, not historical backfill.
-
-Include new announcements and cross-listings; exclude replacements/revisions. The RSS feed carries abstracts directly, so browsing and ranking need no individual paper pages or PDFs. Only the explicit `text` command downloads featured-paper HTML. PDF links point to the announced version. Author names come from the feed's `dc:creator` field; abbreviation of unstructured names uses a heuristic that preserves common surname particles and explicit collaboration names. Full names remain in tooltips. An author metadata side table can enrich matching archived IDs/versions on a feed refresh without rewriting the original announcement snapshots; published application snapshots remain unchanged. Papers without author metadata show “Authors unavailable.”
-
-Saved digests are immutable: repeating a download for the same announcement date and category set does not replace the published page, even if the upstream feed changes. Corrected-batch regeneration is deliberately not implemented yet.
+Verbose mode prints full responses only for actual calls, defensively redacting credentials; raw responses are not stored. Logs may still contain paper text. Page requests never retrieve text or invoke a provider.
 
 ## Development
 
-There are **no schema migrations or old-schema compatibility paths**. `schema/papers.sql` and `schema/app.sql` define the current schemas; opening a database initializes any missing tables, but does not upgrade existing tables.
-
-When changing the application schema, stop the server and recreate only its database:
-
-```sh
-rm data/app.sqlite
-npm start -- --offline
-```
-
-This resets generated digests, embeddings, scores, all summary outcomes/caches, **vote history, and feedback snapshots**. Back up the app database before resetting if you want to preserve votes. Rankings are rebuilt locally using the preserved `data/papers.sqlite` and `data/models/`, without arXiv requests or model downloads. Keep the paper database; do not remove the entire `data/` directory. If needed, `npm run serve` reconstructs a basic view without loading the model. Deleting application state is an explicit development reset, not a change to an existing published digest.
-
+There are **no migrations or legacy-schema compatibility paths**. `schema/app.sql` and `schema/papers.sql` define current development schemas. Stop processes before resetting databases. Resetting `app.sqlite` loses the current publication, votes, and generated state; `generate --clear` is the normal listing reset that preserves votes and the old page until replacement. Keep model assets. An application reset can generate again from current feed caches with `generate --offline`, but serving never reconstructs historical listings.
 
 ```sh
 npm test
 npm run typecheck
 ```
 
-Default tests use a recorded RSS excerpt, real SQLite, loopback HTTP servers for browsing/retrieval/summary responses, and small deterministic vectors for scoring correctness. They do not download models or call arXiv or paid model APIs.
+Tests use recorded feeds/HTML, real SQLite, loopback HTTP, and deterministic test vectors/providers. They do not call arXiv, download models, or make paid API requests. Lifecycle tests cover atomic publication, resumable failures, repeated generation, explicit clearing, vote expiry/pruning, stale forms, and live server replacement.
 
-An explicit real-model integration test checks basic relevance, long-input inference, and offline model reload:
+Optional real-model integration checks:
 
 ```sh
-npm run test:model # Downloads model assets on first run; no arXiv calls
-MODEL_OFFLINE=1 npm run test:model # Requires already-cached model assets
+npm run test:model                  # May download assets; no paid summaries
+MODEL_OFFLINE=1 npm run test:model  # Uses already-cached assets
 ```
 
-The app uses Node's built-in HTTP server and native HTML `<details>` elements; no browser JavaScript or frontend build is needed.
+The main modules are `arxiv.ts`/`load.ts` (ingestion), `generate.ts` (manual orchestration), `listing-store.ts` (publication/retention/lock), `store.ts` (paper/vector/score/summary persistence), `scoring.ts`/`ranking.ts`/`feedback.ts` (relevance), `fulltext.ts`/`summaries.ts`/`cloudflare.ts` (optional summaries), and `render.ts`/`server.ts` (reading).
 
-- `src/arxiv.ts`: RSS fetching/parsing and category configuration.
-- `src/digest.ts`: deduplication and seeded random selection.
-- `src/load.ts`: per-category daily download caching and explicit refresh.
-- `src/profiles.ts`: separate semantic Subjects and explicit Keywords profile loading.
-- `src/embeddings.ts`, `src/bge.ts`: embedding interface, token-bounded chunking, and local BGE backend.
-- `src/scoring.ts`: vector caching, cosine scores, and fixed ranking orchestration.
-- `src/ranking.ts`: combined scores, featured selection, wildcard sampling, and MMR ordering.
-- `src/authors.ts`: compact author formatting and display-name normalization.
-- `src/feedback.ts`: configurable similarity-based vote propagation and duplicate suppression.
-- `src/store.ts`, `schema/`: separate paper/application databases and current SQL schemas.
-- `src/math.ts`, `src/render.ts`, `src/server.ts`: safe math/HTML rendering, local KaTeX assets, and preview.
-- `src/config.ts`, `config.toml`: validated, commented model/scoring/tokenizer configuration.
-- `src/tokenizer.ts`: local full-prompt token estimates.
-- `src/summaries.ts`, `src/cloudflare.ts`: budgeted, no-retry summary generation and the Cloudflare adapter.
-- `src/fulltext.ts`: cached, HTML-only featured-paper text retrieval and extraction.
-- `src/cli.ts`: download/preview commands.
-
-See [research interests](interests.md) and [development plan](.agents/PLAN.md) for the intended relevance-based pipeline and later Hugo/Cloudflare integration. Those integrations are not part of this local slice.
+See [the development plan](.agents/PLAN.md). Historical implementation notes describe superseded archive-oriented behavior; the ephemeral listing contract takes precedence. Cron-like scheduling, authentication, Hugo, and Cloudflare deployment remain future work.

@@ -12,8 +12,9 @@ import { createCloudflareSummaryProvider } from '../src/cloudflare.ts';
 import { loadConfig, type Config } from '../src/config.ts';
 import { renderDigest } from '../src/render.ts';
 import { scoreDigest } from '../src/scoring.ts';
+import { selectWorkingListing } from '../src/listing-store.ts';
 import { claimSummary, latestDigest, openAppDatabase, openPaperDatabase, readPaperText, readSummaries, saveDigest, savePaperText, startSummaryRun } from '../src/store.ts';
-import { reportSummaryTokens, summarizeFeatured, summaryMessages, SUMMARY_PROMPT_VERSION, validateSummary, type PaperSummary, type SummaryProvider } from '../src/summaries.ts';
+import { reportSummaryTokens, summarizeFeatured, summaryMessages, SUMMARY_PROMPT_VERSION, validateSummary, SummaryError, type PaperSummary, type SummaryProvider } from '../src/summaries.ts';
 import { estimatePromptTokens } from '../src/tokenizer.ts';
 
 const quiet = () => {};
@@ -37,6 +38,7 @@ async function setup(count = 8, appPath = ':memory:', papersPath = ':memory:') {
       sourceUrl: `https://arxiv.org/html/${id}v1`, checkedAt: '2026-11-09T12:00:00Z',
     } });
   }
+  selectWorkingListing(app, digest);
   return { app, papers, digest };
 }
 
@@ -221,7 +223,9 @@ test('manual reruns recover HTML preconditions but never retry attempted API fai
     const record = readPaperText(papers, { id: missingId, version: 1 })!;
     record.result = { ...record.result, status: 'unavailable', text: undefined, reason: 'HTTP 404' };
     savePaperText(papers, record);
-    const result = await summarizeFeatured(app, papers, digest, config, saved => createCloudflareSummaryProvider(saved, { credentials: {} }), quiet);
+    const result = await summarizeFeatured(app, papers, digest, config, () => ({ async summarize() {
+      throw new SummaryError('api_unavailable', 'Request failed');
+    } }), quiet);
     assert.equal(result.summaries![missingId].status, 'html_unavailable');
     const apiId = digest.ranking!.featured[1].id;
     assert.equal(result.summaries![apiId].status, 'api_unavailable');

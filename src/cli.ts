@@ -1,10 +1,11 @@
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs';
 import { loadEnvFile } from 'node:process';
 import { dirname, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { categoriesFrom } from './arxiv.ts';
 import { clearSummaries, openAppDatabase, openPaperDatabase, readVotes, saveVote } from './store.ts';
-import { loadDailyDigest, loadSavedDigest } from './load.ts';
+import { acquireGenerationLock, freezeGenerationInputs, pruneListingData, publishListing, readPublication, readWorkingListing } from './listing-store.ts';
+import { generateListing, prepareListing } from './generate.ts';
 import { createDigestServer } from './server.ts';
 import { createBgeProvider } from './bge.ts';
 import { loadProfiles } from './profiles.ts';
@@ -14,27 +15,29 @@ import { retrieveFeaturedText } from './fulltext.ts';
 import { reportSummaryTokens, summarizeFeatured } from './summaries.ts';
 import { createCloudflareSummaryProvider } from './cloudflare.ts';
 
-const usage = `ruminator — a local arXiv browser
+const usage = `ruminator — a local, ephemeral arXiv browser
 
-Usage: npm run <start|fetch|serve|score|text|summarize> -- [options]
-  start                  Use today's cached download, or download, then serve
-  fetch                  Use today's cached download, or download, and save only
-  serve                  Serve saved data without network access or inference
-  score                  Score the latest saved digest (never contacts arXiv)
-  text                   Cache HTML text for saved featured papers only
-  summarize              Summarize featured cached text (paid calls; no retries)
-  -v, --verbose          Print full model responses (summarize only)
-  --clear                Delete ALL summary state and exit; no API calls (summarize only)
-  --tokens               Print per-paper and total token estimates, then exit; no API calls
-  --categories quant-ph  Comma-separated arXiv categories
-  --app-db data/app.sqlite       Disposable application state
-  --papers-db data/papers.sqlite Downloaded paper information and source metadata
-  --port 3000            Local preview port
-  --refresh              Bypass daily download cache (start/fetch only)
-  --config config.toml   Model, scoring, and tokenizer configuration
+Usage: npm run <generate|start|fetch|serve|score|text|summarize> -- [options]
+  generate               Fetch, rank, and publish one global listing, then exit
+  --summarize            Also retrieve text and summarize (generate only; paid)
+  --clear                Regenerate listing state (generate); or clear only summaries (summarize)
+  start                  Generate without paid summaries, then serve
+  fetch                  Fetch into staging without publishing
+  serve                  Serve the current publication offline; follows replacements
+  score                  Rank the working listing and publish it
+  text                   Retrieve featured HTML for the working listing
+  summarize              Summarize working text and publish (paid; no request retries)
+  -v, --verbose          Print model responses (summarize or generate --summarize)
+  --tokens               Estimate summary tokens only (summarize)
+  --categories quant-ph  Comma-separated categories for generate/start/fetch
+  --app-db data/app.sqlite       Current/working listing and preference memory
+  --papers-db data/papers.sqlite Current source cache, not an archive
+  --port 3000            Loopback preview port
+  --refresh              Bypass daily feed cache (generate/start/fetch)
+  --config config.toml   Model, scoring, tokenizer and budget configuration
   --profiles interests.md Research-interest Markdown file
-  --offline              Use saved data and cached assets only; no network
-  --retry-unavailable    Retry unavailable HTML (text only; successes stay cached)
+  --offline              Current cached feeds/assets only; no paid summaries
+  --retry-unavailable    Explicit retry of failed HTML downloads (text only)
 `;
 
 async function main(): Promise<void> {
@@ -54,86 +57,94 @@ async function main(): Promise<void> {
       verbose: { type: 'boolean', short: 'v', default: false },
       clear: { type: 'boolean', default: false },
       tokens: { type: 'boolean', default: false },
+      summarize: { type: 'boolean', default: false },
     },
   });
   if (values.help) { console.log(usage); return; }
   const command = positionals[0];
-  if (positionals.length !== 1 || !['start', 'fetch', 'serve', 'score', 'text', 'summarize'].includes(command)) throw new Error(usage);
-  if (values.verbose && command !== 'summarize') throw new Error('--verbose requires summarize');
-  if (values.clear && command !== 'summarize') throw new Error('--clear requires summarize');
+  if (positionals.length !== 1 || !['generate', 'start', 'fetch', 'serve', 'score', 'text', 'summarize'].includes(command)) throw new Error(usage);
+  if (values.summarize && command !== 'generate') throw new Error('--summarize requires generate');
+  if (values.summarize && values.offline) throw new Error('--summarize cannot be combined with --offline');
+  if (values.verbose && command !== 'summarize' && !(command === 'generate' && values.summarize)) throw new Error('--verbose requires summarize or generate --summarize');
+  if (values.clear && !['generate', 'summarize'].includes(command)) throw new Error('--clear requires summarize or generate');
   if (values.tokens && command !== 'summarize') throw new Error('--tokens requires summarize');
   if (values.tokens && values.clear) throw new Error('--tokens cannot be combined with --clear');
-  if (values['retry-unavailable'] && (command !== 'text' || values.offline)) {
-    throw new Error('--retry-unavailable requires text without --offline');
-  }
-  if (values.refresh && (values.offline || !['start', 'fetch'].includes(command))) {
-    throw new Error('--refresh requires start or fetch without --offline');
-  }
+  if (values['retry-unavailable'] && (command !== 'text' || values.offline)) throw new Error('--retry-unavailable requires text without --offline');
+  if (values.refresh && (values.offline || !['generate', 'start', 'fetch'].includes(command))) throw new Error('--refresh requires generate, start or fetch without --offline');
   const config = loadConfig(values.config);
   const categories = categoriesFrom(values.categories);
   const port = Number(values.port);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Port must be between 1 and 65535');
-  const appPath = values['app-db'];
-  const papersPath = values['papers-db'];
-  if (resolve(appPath) === resolve(papersPath)) throw new Error('Application and paper databases must be separate files');
+  const appPath = values['app-db'], papersPath = values['papers-db'];
+  const sameFile = existsSync(appPath) && existsSync(papersPath) &&
+    (realpathSync(appPath) === realpathSync(papersPath) ||
+      (statSync(appPath).dev === statSync(papersPath).dev && statSync(appPath).ino === statSync(papersPath).ino));
+  if (resolve(appPath) === resolve(papersPath) || sameFile) throw new Error('Application and paper databases must be separate files');
   mkdirSync(dirname(appPath), { recursive: true });
-  // Explicit clear-only branch: no digest lookup, source DB, credentials, or API.
-  if (values.clear) {
-    const appDb = openAppDatabase(appPath);
-    try { clearSummaries(appDb); } finally { appDb.close(); }
-    console.log('Cleared all summary outcomes, cache entries, and run budgets. No API calls made.');
-    console.log('Regenerating summaries requires a separate summarize command and may incur new charges.');
-    return;
-  }
-  mkdirSync(dirname(papersPath), { recursive: true });
-  const papersDb = openPaperDatabase(papersPath);
-  const appDb = openAppDatabase(appPath);
-  let digest;
+  const app = openAppDatabase(appPath);
+  let release: (() => void) | undefined;
   try {
-    if ((command === 'start' || command === 'fetch') && !values.offline) {
-      digest = await loadDailyDigest(papersDb, appDb, categories, { refresh: values.refresh });
-      console.log(`Saved ${digest.date}: ${digest.papers.length} papers (${digest.categories.join(', ')}).`);
-    } else {
-      digest = loadSavedDigest(papersDb, appDb, categories);
+    const readOnly = command === 'serve' || (command === 'summarize' && !values.clear && (values.tokens || values.offline));
+    if (!readOnly) release = acquireGenerationLock(app);
+    if (command === 'summarize' && values.clear) {
+      clearSummaries(app);
+      const working = readWorkingListing(app), publication = readPublication(app);
+      if (working?.digest.ranking && working.generationId === publication?.generationId) publishListing(app, working.digest);
+      console.log('Cleared all summary outcomes, cache entries, and run budgets. No API calls made.');
+      return;
     }
-    if (command === 'start' || command === 'score') {
-      if (!digest.ranking) {
-        console.log('Computing local scores and diversity-aware ranking (cached embeddings are reused)…');
-        digest = await scoreDigest(appDb, digest, loadProfiles(values.profiles), () => createBgeProvider({ offline: values.offline }), console.log, config.scoring.weights, config.feedback);
-      }
-      console.log('Using saved relevance scores, featured selections, and MMR listing order.');
+    if (command !== 'serve') {
+      mkdirSync(dirname(papersPath), { recursive: true });
+      const papers = openPaperDatabase(papersPath);
+      try {
+        const provider = (settings: Parameters<typeof createCloudflareSummaryProvider>[0]) => {
+          if (existsSync('.env')) loadEnvFile('.env');
+          return createCloudflareSummaryProvider(settings, { verbose: values.verbose });
+        };
+        const options = { categories, config, offline: values.offline, clear: values.clear, refresh: values.refresh, log: console.log };
+        if (command === 'generate' || command === 'start') {
+          await generateListing(app, papers, { ...options, profiles: loadProfiles(values.profiles),
+            createEmbeddingProvider: () => createBgeProvider({ offline: values.offline }),
+            summarize: values.summarize, createSummaryProvider: provider });
+        } else if (command === 'fetch') {
+          const result = await prepareListing(app, papers, options);
+          console.log(`Working batch ${result.digest.date}: ${result.digest.papers.length} papers.`);
+        } else {
+          if (command === 'score') pruneListingData(app, papers);
+          let digest = readWorkingListing(app)?.digest;
+          if (!digest) throw new Error('No working listing; run generate or fetch first');
+          if (command === 'score') {
+            const inputs = freezeGenerationInputs(app, { config, profiles: loadProfiles(values.profiles) });
+            digest = await scoreDigest(app, digest, inputs.profiles, () => createBgeProvider({ offline: values.offline }), console.log,
+              inputs.config.scoring.weights, inputs.config.feedback);
+            publishListing(app, digest);
+            pruneListingData(app, papers);
+          } else if (command === 'text') {
+            await retrieveFeaturedText(papers, digest, { offline: values.offline, retryUnavailable: values['retry-unavailable'] });
+          } else if (values.tokens) {
+            reportSummaryTokens(papers, digest, config);
+          } else if (values.offline) {
+            console.log('Offline: using saved summaries; no requests or new outcomes recorded.');
+          } else {
+            digest = await summarizeFeatured(app, papers, digest, config, provider);
+            publishListing(app, digest);
+            pruneListingData(app, papers);
+          }
+        }
+      } finally { papers.close(); }
     }
-    if (command === 'text') {
-      await retrieveFeaturedText(papersDb, digest, { offline: values.offline, retryUnavailable: values['retry-unavailable'] });
-    }
-    if (command === 'summarize') {
-      if (values.tokens) {
-        reportSummaryTokens(papersDb, digest, config);
-      } else if (values.offline) {
-        console.log('Offline: using saved summaries; no requests or new outcomes recorded.');
-      } else {
-        if (existsSync('.env')) loadEnvFile('.env');
-        digest = await summarizeFeatured(appDb, papersDb, digest, config,
-          settings => createCloudflareSummaryProvider(settings, { verbose: values.verbose }));
-      }
-    }
-  } finally {
-    appDb.close();
-    papersDb.close();
-  }
-  if (['fetch', 'score', 'text', 'summarize'].includes(command)) return;
+  } finally { release?.(); app.close(); }
+  if (!['serve', 'start'].includes(command)) return;
   const votesDb = openAppDatabase(appPath);
-  const server = createDigestServer(digest!, { read: () => readVotes(votesDb), write: (paper, value) => saveVote(votesDb, paper, value) });
+  if (!readPublication(votesDb)) { votesDb.close(); throw new Error('No published listing; run generate first'); }
+  const server = createDigestServer(() => readPublication(votesDb), {
+    read: () => readVotes(votesDb), write: (paper, value) => saveVote(votesDb, paper, value),
+  });
   const closeVotes = () => { if (votesDb.isOpen) votesDb.close(); };
   server.once('close', closeVotes);
   server.on('error', error => { closeVotes(); console.error(error.message); process.exitCode = 1; });
-  server.listen(port, '127.0.0.1', () => console.log(`Browse http://127.0.0.1:${port} (announcement ${digest!.date})`));
-  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-    process.once(signal, () => server.close());
-  }
+  server.listen(port, '127.0.0.1', () => console.log(`Browse http://127.0.0.1:${port} (current listing; refresh after generation)`));
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => server.close());
 }
 
-main().catch(error => {
-  console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
-});
+main().catch(error => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1; });

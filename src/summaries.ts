@@ -172,12 +172,13 @@ export async function summarizeFeatured(
       claimSummary(appDb, digest, { ...pending, status: 'token_budget', detail: 'Paper exceeds input/context allowance; no truncation' }, 0);
       continue;
     }
+    // Missing local credentials are a precondition, not an attempted paid request.
+    provider ??= createProvider(run.config);
     // claimSummary atomically enforces the saved run budget, including failed calls.
     if (!claimSummary(appDb, digest, pending, estimate.estimatedInputTokens)) continue;
     let result: PaperSummary;
     let usage: SummaryUsage | undefined;
     try {
-      provider ??= createProvider(run.config);
       const response = await provider.summarize(messages, limits.max_completion_tokens);
       usage = response.usage;
       result = {

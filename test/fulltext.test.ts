@@ -10,6 +10,7 @@ import { test } from 'node:test';
 import { extractArxivHtml, HTML_EXTRACTOR, retrieveFeaturedText } from '../src/fulltext.ts';
 import { latestDigest, openAppDatabase, openPaperDatabase, readPaperText, saveDigest, savePaperText } from '../src/store.ts';
 import { scoreDigest } from '../src/scoring.ts';
+import { selectWorkingListing } from '../src/listing-store.ts';
 
 const html = readFileSync(new URL('./fixtures/paper.html', import.meta.url), 'utf8');
 const unsectioned = readFileSync(new URL('./fixtures/paper-unsectioned.html', import.meta.url), 'utf8');
@@ -178,6 +179,7 @@ test('text CLI reads saved selections offline without loading a model or changin
   const cached = await retrieveFeaturedText(papers, digest, {
     fetcher: async () => new Response(html, { headers: { 'Content-Type': 'text/html' } }), log: quiet,
   });
+  selectWorkingListing(app, digest);
   app.close(); papers.close();
   try {
     const args = ['src/cli.ts', 'text', '--offline', '--app-db', appPath, '--papers-db', papersPath];

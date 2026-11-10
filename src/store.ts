@@ -203,6 +203,12 @@ function decodeDigest(row: DigestRow): Digest {
   };
 }
 
+export function readDigest(db: DatabaseSync, date: string, categories: string[]): Digest | undefined {
+  const row = db.prepare('SELECT * FROM digests WHERE announcement_date = ? AND categories_json = ?')
+    .get(date, JSON.stringify([...categories].sort())) as DigestRow | undefined;
+  return row ? withScores(db, decodeDigest(row)) : undefined;
+}
+
 export function latestDigest(db: DatabaseSync, categories: string[]): Digest | undefined {
   const row = db.prepare(`SELECT * FROM digests WHERE categories_json = ?
     ORDER BY announcement_date DESC LIMIT 1`).get(JSON.stringify([...categories].sort())) as DigestRow | undefined;
@@ -229,7 +235,7 @@ export function saveSemanticScores(db: DatabaseSync, digest: Digest, scores: Sem
   return readSemanticScores(db, digest)!;
 }
 
-/** Save an immutable digest; canonical source archives stay in the paper DB. */
+/** Persist working membership; the listing lifecycle keeps only one working batch. */
 export function saveDigest(db: DatabaseSync, batches: Batch[]): Digest {
   const digest = createDigest(batches);
   const categories = JSON.stringify(digest.categories);
@@ -266,10 +272,11 @@ export function cachedDownload(db: DatabaseSync, category: string): Download | u
   return row ? { batch: JSON.parse(row.batch_json), checkedAt: row.checked_at } : undefined;
 }
 
-/** Archive the first source snapshot and update freshness atomically. */
+/** Keep the current source snapshot per category and update freshness atomically. */
 export function saveDownload(db: DatabaseSync, { batch, checkedAt }: Download): void {
   db.exec('BEGIN');
   try {
+    db.prepare('DELETE FROM batches WHERE category = ? AND announcement_date != ?').run(batch.category, batch.date);
     db.prepare(`INSERT INTO batches (category, announcement_date, source_url, papers_json, fetched_at)
       VALUES (?, ?, ?, ?, ?) ON CONFLICT (category, announcement_date) DO NOTHING`)
       .run(batch.category, batch.date, batch.sourceUrl, JSON.stringify(batch.papers), checkedAt);
@@ -299,15 +306,4 @@ export function archivedBatch(db: DatabaseSync, category: string, date: string):
     if (names) paper.authors = JSON.parse(names.names_json);
   }
   return { category, date, sourceUrl: row.source_url, papers };
-}
-
-/** Rebuild application state from the latest announcement shared by all categories. */
-export function latestBatches(db: DatabaseSync, categories: string[]): Batch[] {
-  const unique = [...new Set(categories)].sort();
-  if (!unique.length) return [];
-  const placeholders = unique.map(() => '?').join(',');
-  const row = db.prepare(`SELECT announcement_date FROM batches WHERE category IN (${placeholders})
-    GROUP BY announcement_date HAVING COUNT(*) = ? ORDER BY announcement_date DESC LIMIT 1`)
-    .get(...unique, unique.length) as { announcement_date: string } | undefined;
-  return row ? unique.map(category => archivedBatch(db, category, row.announcement_date)!) : [];
 }

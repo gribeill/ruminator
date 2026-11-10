@@ -6,6 +6,7 @@ import type { Paper } from './arxiv.ts';
 import type { Digest } from './digest.ts';
 import { paperAnchor, type Votes, type VoteValue } from './feedback.ts';
 import { renderDigest } from './render.ts';
+import type { Publication } from './listing-store.ts';
 
 export interface VoteStore {
   read(): Votes;
@@ -26,13 +27,24 @@ function readForm(request: IncomingMessage): Promise<URLSearchParams> {
   });
 }
 
-/** Saved digest data never changes; only current vote controls are rendered afresh.
- * Vote handlers persist state only: page requests never load models or rank papers.
+/** Follow atomic publications, never staging. Reads and votes never invoke models.
+ * Rotating the form token on replacement also rejects stale forms for overlapping papers.
  */
-export function createDigestServer(digest: Digest, votes?: VoteStore): Server {
-  const html = renderDigest(digest);
-  const csrfToken = randomBytes(32).toString('hex');
-  const byId = new Map(digest.papers.map(paper => [paper.id, paper]));
+export function createDigestServer(source: Digest | (() => Publication | undefined), votes?: VoteStore): Server {
+  let digest: Digest | undefined;
+  let html = '', identity = '', csrfToken = '';
+  let byId = new Map<string, Paper>();
+  const refresh = () => {
+    const publication = typeof source === 'function' ? source() : { generationId: 'static', digest: source };
+    const next = JSON.stringify(publication);
+    if (next === identity) return;
+    identity = next;
+    digest = publication?.digest;
+    html = digest ? renderDigest(digest) : '';
+    csrfToken = randomBytes(32).toString('hex');
+    byId = new Map(digest?.papers.map(paper => [paper.id, paper]) ?? []);
+  };
+  refresh();
   // Serve installed assets locally so math also works without internet or a CDN.
   const dist = new URL('.', import.meta.resolve('katex'));
   const assets = new Map([
@@ -67,7 +79,8 @@ export function createDigestServer(digest: Digest, votes?: VoteStore): Server {
         let form: URLSearchParams;
         try { form = await readForm(request); }
         catch { send(413, 'Vote form could not be read or is too large'); return; }
-        if (form.get('token') !== csrfToken) { send(403, 'Invalid form token'); return; }
+        refresh(); // Publication may have changed while the request body was arriving.
+        if (form.get('token') !== csrfToken) { send(403, 'Invalid or outdated form token. Reload / for the current listing.'); return; }
         if ([...form.keys()].length !== 3 || ['paper', 'value', 'token'].some(key => form.getAll(key).length !== 1)) {
           send(400, 'Invalid vote form'); return;
         }
@@ -91,6 +104,8 @@ export function createDigestServer(digest: Digest, votes?: VoteStore): Server {
       if (path !== '/' || (request.method !== 'GET' && request.method !== 'HEAD')) {
         send(404, 'Not found'); return;
       }
+      refresh();
+      if (!digest) { send(503, 'No published listing; run generate first'); return; }
       response.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',

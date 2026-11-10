@@ -4,8 +4,9 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { parseFeed } from '../src/arxiv.ts';
 import { scoreDigest } from '../src/scoring.ts';
-import { downloadDay, loadDailyDigest, loadSavedDigest } from '../src/load.ts';
-import { archivedBatch, cachedDownload, latestBatches, latestDigest, openAppDatabase, openPaperDatabase, saveDownload } from '../src/store.ts';
+import { downloadDay, loadDailyDigest } from '../src/load.ts';
+import { prepareListing } from '../src/generate.ts';
+import { archivedBatch, cachedDownload, latestDigest, openAppDatabase, openPaperDatabase, saveDownload } from '../src/store.ts';
 
 const batch = parseFeed(readFileSync(new URL('./fixtures/quant-ph.xml', import.meta.url), 'utf8'), 'quant-ph');
 const now = new Date('2026-11-10T15:00:00Z');
@@ -83,21 +84,19 @@ test('an empty downloaded batch is cached too', async () => {
   } finally { app.close(); papers.close(); }
 });
 
-test('offline reconstruction selects the latest batch shared by every requested category', () => {
+test('offline staging uses current feeds only, never historical common-date reconstruction', async () => {
   const papers = openPaperDatabase(':memory:');
   const app = openAppDatabase(':memory:');
   const checkedAt = now.toISOString();
   try {
-    assert.throws(() => loadSavedDigest(papers, app, ['quant-ph']), /No saved announcement/);
+    await assert.rejects(prepareListing(app, papers, { categories: ['quant-ph'], offline: true }), /No current cached feed/);
     saveDownload(papers, { batch, checkedAt });
     saveDownload(papers, { batch: { ...batch, category: 'cs.ET' }, checkedAt });
     saveDownload(papers, { batch: { ...batch, date: '2026-11-10' }, checkedAt });
-    assert.equal(latestBatches(papers, ['quant-ph'])[0].date, '2026-11-10');
-    const common = loadSavedDigest(papers, app, ['quant-ph', 'cs.ET']);
-    assert.equal(common.date, batch.date);
-    assert.deepEqual(common.categories, ['cs.ET', 'quant-ph']);
-    assert.deepEqual(latestBatches(papers, ['math.OC']), []);
-    assert.deepEqual(latestBatches(papers, []), []);
+    assert.equal(archivedBatch(papers, 'quant-ph', batch.date), undefined);
+    await assert.rejects(prepareListing(app, papers, { categories: ['quant-ph', 'cs.ET'], offline: true }), /different announcement dates/);
+    const latest = await prepareListing(app, papers, { categories: ['quant-ph'], offline: true });
+    assert.equal(latest.digest.date, '2026-11-10');
   } finally { app.close(); papers.close(); }
 });
 
@@ -115,7 +114,7 @@ test('recreating the application DB preserves source data and rebuilds a digest 
     }), log);
     assert.ok(latestDigest(app, ['quant-ph'])?.semantic);
     assert.deepEqual(papers.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all().map(r => r.name), ['batches', 'feed_downloads', 'paper_authors', 'paper_texts']);
-    assert.deepEqual(app.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all().map(r => r.name), ['digest_summaries', 'digests', 'embeddings', 'feedback_snapshots', 'rankings', 'semantic_scores', 'summary_cache', 'summary_runs', 'vote_events']);
+    assert.deepEqual(app.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all().map(r => r.name), ['digest_summaries', 'digests', 'embeddings', 'feedback_snapshots', 'generation_lock', 'publication', 'rankings', 'semantic_scores', 'summary_cache', 'summary_runs', 'vote_events', 'working_listing']);
     app.close();
     papers.close();
     const sourceBytes = readFileSync(papersPath);
@@ -125,7 +124,7 @@ test('recreating the application DB preserves source data and rebuilds a digest 
     assert.equal(latestDigest(app, ['quant-ph']), undefined);
     assert.equal(app.prepare('SELECT COUNT(*) AS n FROM embeddings').get()?.n, 0);
     assert.equal(app.prepare('SELECT COUNT(*) AS n FROM semantic_scores').get()?.n, 0);
-    assert.deepEqual(loadSavedDigest(papers, app, ['quant-ph']), original);
+    assert.deepEqual((await prepareListing(app, papers, { categories: ['quant-ph'], offline: true })).digest, original);
     assert.deepEqual(await loadDailyDigest(papers, app, ['quant-ph'], {
       now, log, download: async () => { throw new Error('Must reuse the independent paper cache'); },
     }), original);

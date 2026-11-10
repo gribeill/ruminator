@@ -17,6 +17,12 @@ Use narrow provider-independent interfaces for embeddings and summaries. Use BGE
 
 Use two SQLite databases and a small database module, keeping SQL within D1's supported SQLite subset where practical. Keep downloaded paper information/source metadata separate from disposable application state. Use current schema definitions only: no migration runner, version upgrades, or legacy schema fallbacks during development. Isolate filesystem, local-server, and database-driver dependencies from ranking and generation logic. Do not build a generic storage framework or implement a D1 adapter yet.
 
+### Ephemeral listing contract (supersedes historical retention below)
+
+Keep one global published listing and at most one resumable working listing, not an archive per date/category combination. Manual `generate` fetches and ranks; `generate --summarize` additionally retrieves featured text and makes explicitly authorized paid calls. No scheduling infrastructure. A repeated published batch is a no-op; `generate --clear` resets only listing-generation state and regenerates, preserving the old publication until replacement and requiring `--summarize` again for paid calls. Individual development commands remain available.
+
+Publish atomically only after ranking (and requested summary attempts) completes. Missing HTML/API summaries do not block publication; feed/ranking failures leave the previous listing readable. The server follows replacements without inference. Prune superseded batches, rankings, full text, summaries, run snapshots, and unneeded embeddings. Keep only latest active votes, expiring 365 days after their last explicit change; using feedback does not renew it. Keep voted metadata for re-embedding and current/staging inputs, plus model assets. Prune on manual generation. No historical navigation or archive reconstruction. Schemas may break during development; no compatibility or migration layer.
+
 ### Daily lifecycle and immutability
 
 1. Fetch a posting batch and snapshot the profiles, configuration, and votes available at generation start.
@@ -24,7 +30,7 @@ Use two SQLite databases and a small database module, keeping SQL within D1's su
 3. Publish the completed digest to the local HTML view/export.
 4. Store subsequent votes separately; they affect only future digests.
 
-A completed ranked digest is a fixed artifact: page refreshes, new votes, and provider/configuration changes do not reorder or rewrite it. Fetch-only/unranked previews are provisional until their first ranking is saved. Cache intermediate work so interrupted generation can resume without repeating successful paid calls. Keep incomplete runs separate from published digests. Seeded randomness is reproducible, but persisting final order is what guarantees display stability.
+The current ranked listing is stable: page refreshes, new votes, and provider/configuration changes do not reorder it. Fetch-only/unranked work stays in staging, invisible to the reading server. Cache intermediate work so interrupted generation resumes without repeating paid attempts. Atomically replace publication only after ranking and any requested summary attempts finish, then prune superseded artifacts. `generate --clear` explicitly restarts working generation while preserving the old publication until replacement. Seeded randomness is reproducible, but persisted order guarantees display stability.
 
 ### Research-interest configuration
 
@@ -32,18 +38,18 @@ Use one `interests.md` file containing six independent profiles. Each `## Displa
 
 ### Local storage
 
-- **`data/papers.sqlite`** (`schema/papers.sql`): archived announcement batches, paper information/source metadata, and latest per-category download/freshness records. Preserve this database across application schema changes.
-- **`data/app.sqlite`** (`schema/app.sql`): generated digest snapshots, vectors, semantic score/profile snapshots, vote history, feedback snapshots, and summaries. Recreate this database explicitly when its schema changes; do not migrate old development schemas.
+- **`data/papers.sqlite`** (`schema/papers.sql`): current per-category downloads/freshness and current/working paper metadata/HTML. Not a historical archive.
+- **`data/app.sqlite`** (`schema/app.sql`): one publication, one working generation, needed embeddings, active vote memory, and current generation/summary provenance. Recreate explicitly for incompatible schema changes; no migration runner.
 - **`data/models/`**: independently cached model assets, also preserved during application DB resets.
 
-Expose separate `--papers-db` and `--app-db` paths; reject using the same file. Offline commands reuse published digests when available, or reconstruct an unscored digest from the latest announcement date shared by all requested archived categories. This allows local re-scoring after an application reset without re-fetching arXiv. `serve` can reconstruct this initial view but never invokes a model.
+Expose separate `--papers-db` and `--app-db` paths; reject the same file including aliases. Offline generation uses only current downloaded category feeds and cached models; reject mixed dates rather than finding an older shared batch. `serve` displays only the current publication, follows replacements on refresh, and never reconstructs history or invokes a model.
 
 Retain at least:
 
 - Papers: arXiv ID/version, title, abstract, categories, and source metadata.
 - Posting batches: announcement date and paper membership, separate from paper identity.
 - Profiles and embeddings: content/configuration snapshots or hashes, model identity, and vectors for papers and profile inputs.
-- Votes: paper identity, up/down value, and timestamps; allow changing or clearing a vote without changing existing digests. Preserve enough history or snapshot data to reproduce feedback inputs.
+- Votes: latest active paper identity, up/down value, metadata, and explicit-change timestamp. Compact superseded/cleared events and expire votes older than 365 days during manual generation; feedback use does not renew retention. Remove expired metadata from frozen provenance too, without changing scores/order.
 - Generation runs/digests: posting batch, configuration/profile/model identities, feedback snapshot, completion state, ordered paper membership, and selection roles.
 - Scores: semantic, keyword, feedback, and combined relevance components for inspection.
 - Summaries: structured response and cache identity.
@@ -55,6 +61,8 @@ The personal site uses Hugo. Eventually a scheduled daily job will generate a di
 Keep generation independent of presentation so Hugo can replace the local renderer without changing ranking. A Worker would trigger a Hugo build rather than run Hugo itself. Hosted model calls are the natural fit for Worker execution; paid Workers still have execution/resource limits, so preserve restartable stages and the option to run generation elsewhere. No Cloudflare integration, deployment infrastructure, or scheduling setup is required now.
 
 ## Implementation sequence
+
+Completed entries below are historical records; archive/retention/display choices explicitly superseded by newer entries are not current requirements.
 
 Implement one focused slice at a time, with integration and correctness tests for non-trivial logic rather than exhaustive mocking.
 
@@ -83,6 +91,7 @@ Implement one focused slice at a time, with integration and correctness tests fo
 - [x] **Abstract-first reading and visible scores.** Place featured abstracts before closed-by-default AI-summary disclosures, retaining the summary's light-grey panel/border and keeping links/votes outside both disclosures. Restore saved scores beside every title to two decimal places (semantic fallback for semantic-only previews; none for unscored papers). Test ordering, disclosure defaults, score rounding, and unchanged saved state. Supersedes the earlier hide-numeric-scores display choice; selection labels subsequently renamed as recorded below.
 - [x] **Neutral selection labels.** Use “Selected”, “Adjacent”, and “Wildcard” in the reading view; update documentation and verify the exact labels without changing stored roles or ranking.
 - [x] **Aligned summary disclosure.** Remove the AI summary's darker left border and horizontal padding so its disclosure marker aligns with Abstract; retain the light-grey background and test the styling contract.
+- [x] **Ephemeral manual generation.** Added manual generate/optional summaries/explicit clear, one global atomic publication plus resumable staging, frozen ranking inputs, exclusive local generation, 365-day vote retention and reachability pruning, and live server replacement with stale-form rejection. Removed historical offline reconstruction; current source feeds are bounded per category. Credential preflight no longer consumes no-retry claims. Updated workflow documentation. All 81 local tests and typechecking pass, including real SQLite reopening/pruning, failed/resumed generation, no-op/clear behavior, lock recovery, and loopback publication updates. Backed up local app/source DBs in `data/pre-ephemeral-1794322347237/`, retained the 2026-11-10 listing and three active votes, and pruned superseded live state. Verified an actual offline generate no-op and HTTP preview; no model downloads, arXiv calls, paid requests, cron, or hosting.
 - [ ] Document and exercise the full local workflow, including resumable generation and cached reruns. Keep external model/API smoke tests optional and explicit about credentials and spend.
 
 ## Agreed ranking and browsing design
@@ -143,11 +152,11 @@ Implemented MMR balance: 0.7 × relevance − 0.3 × maximum embedding similarit
 
 Use `https://rss.arxiv.org/rss/{category}`, which includes abstracts and the current announcement batch without per-paper scraping or pagination. Include `new` and `cross` announcements, exclude `replace` and `replace-cross`, and deduplicate papers across configured categories. Derive the announcement date from channel `pubDate` in US Eastern time, not the local calendar date or a submission-date search. Display the reported date; the latest batch can predate today, especially around weekends/holidays. There is no historical backfill yet.
 
-Require all requested feeds to report the same date. Publish a digest only after all requested categories are available; successful downloads are archived independently, and failures do not publish partial digests. Save the first source batch and digest snapshots for each date/category or category set, and do not silently overwrite them on reruns. The paper database stores source metadata and paper information as JSON batch snapshots; the application database stores copies within immutable digest snapshots. Additional indexed tables can be introduced when ranking and feedback require them.
+Require all requested feeds to report the same date. Keep successful current-category downloads independently, but publish only complete ranked listings. Each category retains its current source batch, not older batches. Repeated published batches are no-ops; explicit `generate --clear` rebuilds from the current download cache (or a fresh download with `--refresh`). There is one global publication across category combinations.
 
-The local server binds only to loopback and serves a saved snapshot without network access on page requests. Restart it to display a newly downloaded digest. Math is rendered server-side with KaTeX for `$…$`, `$$…$$`, `\(…\)`, and `\[…\]`; styles and fonts are local assets, so cached reading needs neither a CDN nor client-side scripts. Paper HTML remains escaped and KaTeX trust features are disabled; unsupported math falls back to escaped source.
+The local server binds only to loopback and serves the current publication without network access on page requests. It follows replacements on refresh and rotates form tokens to reject stale votes, including after a same-batch clear/rebuild. Math is rendered server-side with KaTeX for `$…$`, `$$…$$`, `\(…\)`, and `\[…\]`; styles and fonts are local assets, so cached reading needs neither a CDN nor client-side scripts. Paper HTML remains escaped and KaTeX trust features are disabled; unsupported math falls back to escaped source.
 
-A separate per-category download cache tracks when feeds were successfully retrieved, independently of announcement dates and immutable published digests. `start` and `fetch` reuse downloads from the current US Eastern calendar day, even across different category combinations. `--refresh` explicitly bypasses this cache, without overwriting published digests. The download cache and batch archive live solely in the paper database and survive application schema resets. Failed requests do not advance cache freshness, while successful categories remain cached if a later category fails. Since the cache checks only once per calendar day, a later same-day feed update requires an explicit refresh. `start` reports download failures rather than silently serving stale data; `serve` explicitly opens existing data offline.
+A separate per-category download cache tracks when feeds were successfully retrieved, independently of announcement dates and immutable published digests. `start` and `fetch` reuse downloads from the current US Eastern calendar day, even across different category combinations. `--refresh` explicitly bypasses this cache, without overwriting published digests. The bounded current download cache lives in the paper database and can support offline generation after application resets; there is no historical archive. Failed requests do not advance cache freshness, while successful categories remain cached if a later category fails. Since the cache checks only once per calendar day, a later same-day feed update requires an explicit refresh. `start` reports download failures rather than silently serving stale data; `serve` explicitly opens existing data offline.
 
 ### Author metadata and local verification
 
@@ -159,6 +168,6 @@ Store names by arXiv ID/version in the paper DB's author side table. A refresh c
 - Initial summary model is `openai/gpt-6-luna` via Cloudflare AI Gateway; evaluate summary factuality and usefulness on real papers. Keep model configuration flexible and credentials out of saved/public artifacts.
 - Evaluate the initial keyword/adjacent/MMR/wildcard constants against reader judgments; current values are explicit defaults, not final calibration.
 - Evaluate vote-feedback cosine cutoffs and neutral-shrinkage strength against actual reading judgments; retain the neutral 0.5 baseline without relevant evidence.
-- Define explicit handling of corrected batches or intentional regeneration without silently mutating a published digest.
+- Evaluate the 365-day vote-memory policy and current/staging retention in daily manual use; scheduling remains deferred.
 
 The first local browsing slice is complete. Continue with the next unchecked slice only when requested; Cloudflare and Hugo integration remain deferred.

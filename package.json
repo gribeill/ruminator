@@ -8,6 +8,7 @@
   },
   "scripts": {
     "start": "node src/cli.ts start",
+    "generate": "node src/cli.ts generate",
     "fetch": "node src/cli.ts fetch",
     "serve": "node src/cli.ts serve",
     "test": "node --test test/*.test.ts",

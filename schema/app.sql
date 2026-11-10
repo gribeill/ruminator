@@ -1,4 +1,23 @@
 -- Current development schema only; recreate this DB when the schema changes.
+-- One visible artifact and one working generation; never expose staging to readers.
+CREATE TABLE IF NOT EXISTS publication (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  generation_id TEXT NOT NULL,
+  digest_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS working_listing (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  generation_id TEXT NOT NULL,
+  announcement_date TEXT NOT NULL,
+  categories_json TEXT NOT NULL,
+  inputs_json TEXT
+);
+-- Local CLI writers serialize across async inference/HTTP without holding a DB transaction.
+CREATE TABLE IF NOT EXISTS generation_lock (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  owner_pid INTEGER NOT NULL,
+  token TEXT NOT NULL
+);
 -- Append-only changes preserve vote history; IDs intentionally exclude versions.
 CREATE TABLE IF NOT EXISTS vote_events (
   event_id INTEGER PRIMARY KEY,
