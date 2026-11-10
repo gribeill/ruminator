@@ -15,7 +15,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { loadConfig, parseConfig } from '../src/config.ts';
@@ -32,6 +32,7 @@ test('documented TOML loads with existing defaults and custom file paths', () =>
   assert.ok(config.llm.model.trim()); // The checked-in model is intentionally editable.
   const fingerprint = JSON.parse(BGE_FINGERPRINT);
   for (const [key, value] of Object.entries(config.embedding)) assert.equal(fingerprint[key], value);
+  mkdirSync('data', { recursive: true });
   const dir = mkdtempSync('data/config-test-');
   try {
     const path = join(dir, 'custom.toml');
