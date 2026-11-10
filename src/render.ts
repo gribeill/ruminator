@@ -28,17 +28,20 @@ const cow = String.raw`            ^__^
                 ||----w |
                 ||     ||`;
 
-function abstract(paper: Paper, collapsible = false, voting?: VotingView): string {
+function abstract(paper: Paper, collapsible = false): string {
   const text = `<p class="abstract">${renderMathText(paper.abstract)}</p>`;
-  // Keep the action row outside featured abstract disclosures, but inside remaining-paper dropdowns.
-  const body = collapsible ? `<details class="featured-abstract"><summary>Abstract</summary>${text}</details>` : text;
-  return `${body}<div class="paper-actions"><span><a href="${escape(pdfUrl(paper))}">PDF</a> | <a href="https://arxiv.org/abs/${escape(paper.id)}v${paper.version}">arXiv:${escape(paper.id)}</a></span>${voteControls(paper, voting)}</div>`;
+  return collapsible ? `<details class="featured-abstract"><summary>Abstract</summary>${text}</details>` : text;
+}
+
+// Keep actions outside both featured disclosures, but inside remaining-paper dropdowns.
+function paperActions(paper: Paper, voting?: VotingView): string {
+  return `<div class="paper-actions"><span><a href="${escape(pdfUrl(paper))}">PDF</a> | <a href="https://arxiv.org/abs/${escape(paper.id)}v${paper.version}">arXiv:${escape(paper.id)}</a></span>${voteControls(paper, voting)}</div>`;
 }
 
 function summary(paper: Paper, digest: Digest): string {
   const result = digest.summaries?.[paper.id];
   if (result?.status === 'available') {
-    return `<div class="paper-summary"><p class="text-label">AI summary</p><p>${renderMathText(result.summary!)}</p></div>`;
+    return `<details class="paper-summary"><summary>AI summary</summary><p>${renderMathText(result.summary!)}</p></details>`;
   }
   const reason = result ? summaryUnavailableLabel(result.status) : 'not generated';
   return `<p class="summary-unavailable">Summary unavailable: ${escape(reason)}</p>`;
@@ -50,9 +53,15 @@ function authors(paper: Paper): string {
     : '<span class="authors">Authors unavailable</span>';
 }
 
+/** Round only for display; saved relevance and ordering retain their full precision. */
+function score(id: string, digest: Digest): string {
+  const value = digest.ranking?.scores[id]?.total ?? digest.semantic?.papers[id]?.score;
+  return value === undefined ? '' : `<small class="score" title="${digest.ranking ? 'Combined relevance' : 'Semantic similarity'} (not a probability)">${value.toFixed(2)}</small>`;
+}
+
 function selectionLabel(id: string, digest: Digest): string {
   const role = digest.ranking?.featured.find(p => p.id === id)?.role;
-  return role ? `<small class="selection">${{ relevant: 'For you', adjacent: 'Adjacent topic', wildcard: 'Wildcard' }[role]}</small>` : '';
+  return role ? `<small class="selection">${{ relevant: 'Selected', adjacent: 'Adjacent', wildcard: 'Wildcard' }[role]}</small>` : '';
 }
 
 /** Render only stored data; opening the page never generates a new selection. */
@@ -83,9 +92,9 @@ main > section + section { border-top: 1px dashed #ddd; }
 article { margin: 2em 0; }
 article + article { border-top: 1px dashed #ddd; padding-top: 1em; }
 .abstract { white-space: pre-wrap; }
-.paper-summary { background: #f9f9f9; border-left: 5px solid #ccc; padding: 3px 1em; }
-.text-label, .summary-unavailable { font-size: 0.85rem; color: #555; }
-.text-label { font-weight: 600; margin-bottom: 0; }
+.paper-summary { background: #f9f9f9; padding: 3px 0; }
+.summary-unavailable { font-size: 0.85rem; color: #555; }
+.score { font-size: 0.85rem; font-weight: normal; color: #555; margin-left: 0.5rem; }
 .katex { white-space: normal; }
 .katex-display { overflow-x: auto; overflow-y: hidden; }
 summary { cursor: pointer; }
@@ -110,11 +119,11 @@ ${voting ? '<p>+ / − mean more/less relevant to your interests, not scientific
 </header>
 <main>
 <section><h2>${digest.ranking ? 'Featured papers' : 'Random picks'}</h2>
-${featured.map(p => `<article id="${escape(paperAnchor(p.id))}"><h3>${renderMathText(p.title)} ${selectionLabel(p.id, digest)}</h3>${authors(p)}${summary(p, digest)}${abstract(p, true, voting)}</article>`).join('\n')}
+${featured.map(p => `<article id="${escape(paperAnchor(p.id))}"><h3>${renderMathText(p.title)} ${score(p.id, digest)} ${selectionLabel(p.id, digest)}</h3>${authors(p)}${abstract(p, true)}${summary(p, digest)}${paperActions(p, voting)}</article>`).join('\n')}
 ${digest.papers.length === 0 ? '<p>No new papers in this announcement batch.</p>' : ''}
 </section>
 <section><h2>Other postings (${rest.length})</h2>
-${rest.map(p => `<div class="posting" id="${escape(paperAnchor(p.id))}"><details><summary>${renderMathText(p.title)}${authors(p)}</summary>${abstract(p, false, voting)}</details></div>`).join('\n')}
+${rest.map(p => `<div class="posting" id="${escape(paperAnchor(p.id))}"><details><summary>${renderMathText(p.title)} ${score(p.id, digest)}${authors(p)}</summary>${abstract(p)}${paperActions(p, voting)}</details></div>`).join('\n')}
 </section>
 </main>
 </body>

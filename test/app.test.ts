@@ -118,7 +118,9 @@ test('standalone page uses XMin-like typography and neutral panels with native l
   assert.match(css, /font-family: Optima, Candara, Calibri, Arial, sans-serif/);
   assert.match(css, /border-bottom: 1px dashed #ddd/);
   assert.match(css, /background: #eee; padding: 5px; border-radius: 5px/);
-  assert.match(css, /background: #f9f9f9; border-left: 5px solid #ccc/);
+  // No horizontal inset or left border: both disclosure markers share the same edge.
+  assert.match(css, /\.paper-summary \{ background: #f9f9f9; padding: 3px 0; \}/);
+  assert.doesNotMatch(css, /border-left/);
   assert.match(css, /\.cow \{ margin: 0 0 0 auto/);
   assert.doesNotMatch(css, /(?:^|\})\s*a(?::(?:link|visited))?\s*\{/);
   assert.equal(document.querySelector('nav, footer'), null);

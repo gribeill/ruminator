@@ -7,6 +7,7 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
+import { parseHTML } from 'linkedom';
 import { createCloudflareSummaryProvider } from '../src/cloudflare.ts';
 import { loadConfig, type Config } from '../src/config.ts';
 import { renderDigest } from '../src/render.ts';
@@ -106,7 +107,19 @@ test('six sequential calls use full text; persist summaries/provenance/usage and
     assert.equal(requests, 6);
     const rendered = renderDigest(first);
     assert.equal((rendered.match(/AI summary/g) ?? []).length, 6);
-    assert.ok(rendered.indexOf(summary) < rendered.indexOf('Readable abstract'));
+    const { document } = parseHTML(rendered);
+    assert.equal(document.querySelectorAll('details.paper-summary').length, 6);
+    for (const article of document.querySelectorAll('article')) {
+      const disclosures = article.querySelectorAll('details');
+      assert.equal(disclosures.length, 2);
+      assert.equal(disclosures[0].querySelector('summary')!.textContent, 'Abstract');
+      assert.equal(disclosures[1].querySelector('summary')!.textContent, 'AI summary');
+      assert.ok(disclosures[1].classList.contains('paper-summary'));
+      assert.equal(disclosures[1].querySelector('p')!.textContent, summary);
+      for (const disclosure of disclosures) assert.equal(disclosure.hasAttribute('open'), false);
+      for (const link of article.querySelectorAll('a')) assert.equal(link.closest('details'), null);
+    }
+    assert.equal(document.querySelector('.posting .paper-summary'), null);
   } finally {
     app.close(); papers.close(); server.closeAllConnections();
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));

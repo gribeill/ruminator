@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { parseHTML } from 'linkedom';
+import { paperAnchor } from '../src/feedback.ts';
 import { parseFeed } from '../src/arxiv.ts';
 import { createBgeProvider } from '../src/bge.ts';
 import { averageVectors, normalize, splitChunks, type EmbeddingProvider, type Tokenizer } from '../src/embeddings.ts';
@@ -76,7 +78,7 @@ test('SQLite vector cache isolates models, content edits, and input roles', asyn
   } finally { db.close(); }
 });
 
-test('scores use the strongest profile, stay hidden in HTML, and remain fixed after publication', async () => {
+test('scores use the strongest profile, display two decimal places, and remain fixed after publication', async () => {
   const db = openAppDatabase(':memory:');
   let calls = 0;
   let disposed = false;
@@ -102,16 +104,30 @@ test('scores use the strongest profile, stay hidden in HTML, and remain fixed af
     assert.deepEqual(first.similarities, { hardware: 0.6, sensing: 0.8 });
     assert.deepEqual(scored.featuredIds, digest.featuredIds);
     assert.deepEqual(scored.papers, digest.papers);
+    const snapshot = JSON.stringify(scored);
     const html = renderDigest(scored);
-    assert.doesNotMatch(html, /class="score"|Closest profile:|Keywords:|Feedback:|Relevance scores:/);
+    const { document } = parseHTML(html);
+    assert.equal(document.querySelectorAll('.score').length, batch.papers.length);
     for (const paper of batch.papers) {
-      assert.ok(!html.includes(`>${scored.ranking!.scores[paper.id].total.toFixed(3)}</small>`));
-      assert.ok(Number.isFinite(scored.ranking!.scores[paper.id].total));
+      const element = document.getElementById(paperAnchor(paper.id))!.querySelector('.score')!;
+      assert.equal(element.textContent, scored.ranking!.scores[paper.id].total.toFixed(2));
+      assert.match(element.textContent, /^\d\.\d{2}$/);
+      assert.match(element.getAttribute('title')!, /Combined relevance/);
+    }
+    assert.equal(JSON.stringify(scored), snapshot);
+    assert.equal(parseHTML(renderDigest(digest)).document.querySelector('.score'), null);
+    // A semantic-only stage still displays its saved score, including zero and rounding boundaries.
+    for (const [value, expected] of [[0, '0.00'], [0.876, '0.88'], [1, '1.00']] as const) {
+      const semanticOnly = { ...digest, semantic: { ...scored.semantic!, papers: {
+        [batch.papers[0].id]: { ...first, score: value },
+      } } };
+      const element = parseHTML(renderDigest(semanticOnly)).document.querySelector('.score')!;
+      assert.equal(element.textContent, expected);
+      assert.match(element.getAttribute('title')!, /Semantic similarity/);
     }
     assert.equal(scored.ranking!.featured.length, 6);
-    assert.match(html, /For you/);
-    assert.match(html, /Adjacent topic/);
-    assert.match(html, /Wildcard/);
+    assert.deepEqual([...document.querySelectorAll('.selection')].map(label => label.textContent),
+      ['Selected', 'Selected', 'Selected', 'Selected', 'Adjacent', 'Wildcard']);
     assert.deepEqual(latestDigest(db, ['quant-ph']), scored);
     const again = await scoreDigest(db, digest, [{ ...profiles[0], subjects: ['Changed'] }], async () => {
       throw new Error('Published scores must not initialize the model again');

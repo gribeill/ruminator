@@ -7,7 +7,7 @@ A local, minimal arXiv browser, with a small ASCII cow to keep you company while
 - Compact authors (up to four; first two … last two for longer lists), with all names in a tooltip.
 - Understated + / − relevance votes beside the PDF/arXiv links for every paper.
 
-Selections and display order are fixed once ranking is saved for an announcement batch. Math in titles and abstracts is rendered with KaTeX, including `$…$`, `$$…$$`, `\(…\)`, and `\[…\]`. Styles and fonts are served locally, with no CDN or browser JavaScript. Unsupported/malformed math stays visible as escaped source text. Numeric relevance scores and their tooltips are hidden in the reading view; scores remain stored for ranking and inspection. Full-text summaries are generated only by an explicit paid command. Votes affect future ranking runs, never an already-saved ranking.
+Selections and display order are fixed once ranking is saved for an announcement batch. Math in titles and abstracts is rendered with KaTeX, including `$…$`, `$$…$$`, `\(…\)`, and `\[…\]`. Styles and fonts are served locally, with no CDN or browser JavaScript. Unsupported/malformed math stays visible as escaped source text. Saved relevance scores appear beside each title to two decimal places; rounding is display-only and does not change ranking. Full-text summaries are generated only by an explicit paid command. Votes affect future ranking runs, never an already-saved ranking.
 
 The standalone preview loosely matches the personal site's Hugo **XMin** theme: an 800px reading column, Optima/Candara/Calibri system font stack, light-grey panels, dashed separators, and browser-default link/visited colours. It retains ruminator's cow and reading layout without copying the site's navigation/footer or loading remote theme assets.
 
@@ -115,7 +115,7 @@ npm start -- --offline
 
 The baseline is **BGE-small-en-v1.5**, using the pinned `Xenova/bge-small-en-v1.5` ONNX conversion, q8 weights, CLS pooling, and normalized 384-dimensional vectors. Profiles use only their titles and Subjects bullets, with BGE's retrieval-query instruction. Papers use titles and abstracts. Long inputs are split into sentence-oriented chunks within the 512-token limit, repeating the title, then their vectors are averaged and renormalized.
 
-The stored relevance score (not displayed on the page) is:
+The combined relevance score displayed on the page is:
 
 ```text
 # Default weights from config.toml:
@@ -126,12 +126,12 @@ relevance = 0.60 * semantic + 0.25 * keywords + 0.15 * feedback
 - **Keywords:** only the explicit `### Keywords` bullets in each profile. Each bullet is one phrase or group of semicolon-separated aliases, e.g. `tunable coupler; tunable coupling`. Match whole normalized phrases (case, punctuation/hyphens, simple plurals), never partial coverage or inferred Subjects words. Title hits count twice as much as abstract hits; aliases and repetitions contribute at most once per group. Evidence saturates as `1 - exp(-evidence / 2)`. A missing/empty keyword list scores a neutral **0.5** for that profile; a configured list with no hits scores **0**. Take the strongest profile score, including neutral values (an unspecified profile therefore gives a 0.5 floor).
 - **Feedback:** a neutral **0.5** without nearby voted examples. Similar upvotes raise it and downvotes lower it, using the configurable thresholds and conservative weighting below.
 
-Score components and closest semantic profiles remain available in the application's saved SQLite snapshots, not in page tooltips. These numbers are not probabilities, quality assessments, or percentiles; BGE similarities naturally occupy a narrow high-valued band.
+Combined relevance scores are displayed to two decimal places for featured and remaining papers. A semantic-only preview displays semantic similarity instead; unscored papers have no number. Components and closest semantic profiles remain available in the application's saved SQLite snapshots, not in page tooltips. These numbers are not probabilities, quality assessments, or percentiles; BGE similarities naturally occupy a narrow high-valued band.
 
 ### Selection and order
 
-- **For you:** greedily choose four high relevance scores with a small redundancy penalty.
-- **Adjacent topic:** favor semantic relevance with low keyword overlap, less similarity to the featured set, and a bonus for an unrepresented profile.
+- **Selected:** greedily choose four high relevance scores with a small redundancy penalty.
+- **Adjacent:** favor semantic relevance with low keyword overlap, less similarity to the featured set, and a bonus for an unrepresented profile.
 - **Wildcard:** draw from an equal mixture of uniform sampling and softmax sampling over semantic scores (initial temperature 0.05). No keyword weighting or relevance cutoff. Exclude already selected papers and avoid near-duplicates.
 - **Other postings:** greedy Maximal Marginal Relevance, `0.7 * relevance - 0.3 * maximum_similarity + jitter`, comparing initially against all six featured papers and then against each newly ordered paper. Jitter is fixed per paper/date and bounded by ±0.005. This order intentionally does **not** decrease monotonically by relevance score.
 
@@ -141,7 +141,7 @@ Embeddings are cached in SQLite by input content and model/preprocessing fingerp
 
 ## Voting and future recommendations
 
-Start or restart `npm run serve` (or `npm start`) to use the local voting controls. Every paper has + / − buttons on the same action row as its PDF/arXiv links. The row stays visible for the featured six, outside their collapsed abstracts; remaining postings reveal their links and buttons only when expanded. Votes mean **more/less relevant to your interests**, not scientific quality. The selected button shows your current vote: click it again to clear, or click the other to change. Forms work without browser JavaScript and redirect back to the same paper anchor. No nearby-paper explanations or numeric scores are displayed.
+Start or restart `npm run serve` (or `npm start`) to use the local voting controls. Every paper has + / − buttons on the same action row as its PDF/arXiv links. The row stays visible for the featured six, outside their collapsed abstracts; remaining postings reveal their links and buttons only when expanded. Votes mean **more/less relevant to your interests**, not scientific quality. The selected button shows your current vote: click it again to clear, or click the other to change. Forms work without browser JavaScript and redirect back to the same paper anchor. No nearby-paper explanations are displayed; the number beside each title is its saved relevance score, unchanged by new votes.
 
 Votes share one **base arXiv ID across all versions**, announcement batches, and category combinations. The application database stores an append-only history of changes with timestamps and the paper metadata you voted on. Repeated submissions of the same desired state do not duplicate events. Current votes refresh independently of the saved paper data, selections, summaries, and ordering. The local POST endpoint accepts only papers in the served digest, checks a per-server form token and same-origin/loopback headers, and never contacts a model or recomputes rankings.
 
@@ -182,7 +182,7 @@ npm run summarize -- -v     # Or --verbose: full API response per newly requeste
 npm run serve               # Restart preview to display the saved outcomes
 ```
 
-This requests a small summary about the question, approach, and principal result/qualification, grounded in the **complete cached paper text**, not just its abstract. The summary is labelled “AI summary” and stays visible above an “Abstract” disclosure, collapsed by default for featured papers. PDF and arXiv links remain visible outside the disclosure, including when a summary is unavailable. Output formatting is checked, but factual accuracy and exact sentence count cannot be guaranteed; read the paper for scientific conclusions. No evidence schema or personalized relevance text is generated.
+This requests a small summary about the question, approach, and principal result/qualification, grounded in the **complete cached paper text**, not just its abstract. Featured papers show the “Abstract” disclosure first, followed by an “AI summary” disclosure, both collapsed by default. The AI summary retains a light-grey background without a left border; its disclosure marker aligns with the abstract's. PDF/arXiv links and voting controls remain visible outside both disclosures, including when a summary is unavailable. Output formatting is checked, but factual accuracy and exact sentence count cannot be guaranteed; read the paper for scientific conclusions. No evidence schema or personalized relevance text is generated.
 
 The page distinguishes **exhausted token budget**, **API unavailable**, **HTML unavailable**, and **summarization error**. Before the command runs, it says “Summary unavailable: not generated.” Neither summary text nor availability can change scores, featured picks, or ordering. Other postings have no summaries.
 
