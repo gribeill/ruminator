@@ -6,7 +6,9 @@ A local, minimal arXiv browser, with a small ASCII cow to keep you company while
 - Every remaining paper in a diversity-aware order, as an expandable title revealing its abstract and PDF link.
 - Compact authors (up to four; first two … last two for longer lists), with all names in a tooltip.
 
-Selections and display order are fixed once ranking is saved for an announcement batch. Math in titles and abstracts is rendered with KaTeX, including `$…$`, `$$…$$`, `\(…\)`, and `\[…\]`. Styles and fonts are served locally, with no CDN or browser JavaScript. Unsupported/malformed math stays visible as escaped source text. Every ranked paper shows a combined relevance score with a component breakdown in its tooltip. Full-text summaries are generated only by an explicit paid command; voting is not implemented yet.
+Selections and display order are fixed once ranking is saved for an announcement batch. Math in titles and abstracts is rendered with KaTeX, including `$…$`, `$$…$$`, `\(…\)`, and `\[…\]`. Styles and fonts are served locally, with no CDN or browser JavaScript. Unsupported/malformed math stays visible as escaped source text. Numeric relevance scores and their tooltips are hidden in the reading view; scores remain stored for ranking and inspection. Full-text summaries are generated only by an explicit paid command; voting is not implemented yet.
+
+The standalone preview loosely matches the personal site's Hugo **XMin** theme: an 800px reading column, Optima/Candara/Calibri system font stack, light-grey panels, dashed separators, and browser-default link/visited colours. It retains ruminator's cow and reading layout without copying the site's navigation/footer or loading remote theme assets.
 
 ## Run locally
 
@@ -111,7 +113,7 @@ npm start -- --offline
 
 The baseline is **BGE-small-en-v1.5**, using the pinned `Xenova/bge-small-en-v1.5` ONNX conversion, q8 weights, CLS pooling, and normalized 384-dimensional vectors. Profiles use only their titles and Subjects bullets, with BGE's retrieval-query instruction. Papers use titles and abstracts. Long inputs are split into sentence-oriented chunks within the 512-token limit, repeating the title, then their vectors are averaged and renormalized.
 
-The visible score, rounded to three decimals, is:
+The stored relevance score (not displayed on the page) is:
 
 ```text
 # Default weights from config.toml:
@@ -122,7 +124,7 @@ relevance = 0.60 * semantic + 0.25 * keywords + 0.15 * feedback
 - **Keywords:** only the explicit `### Keywords` bullets in each profile. Each bullet is one phrase or group of semicolon-separated aliases, e.g. `tunable coupler; tunable coupling`. Match whole normalized phrases (case, punctuation/hyphens, simple plurals), never partial coverage or inferred Subjects words. Title hits count twice as much as abstract hits; aliases and repetitions contribute at most once per group. Evidence saturates as `1 - exp(-evidence / 2)`. A missing/empty keyword list scores a neutral **0.5** for that profile; a configured list with no hits scores **0**. Take the strongest profile score, including neutral values (an unspecified profile therefore gives a 0.5 floor).
 - **Feedback:** a neutral **0.5** until voting is implemented.
 
-Hover over a score to inspect its components and closest semantic profile. These numbers are not probabilities, quality assessments, or percentiles; BGE similarities naturally occupy a narrow high-valued band.
+Score components and closest semantic profiles remain available in the application's saved SQLite snapshots, not in page tooltips. These numbers are not probabilities, quality assessments, or percentiles; BGE similarities naturally occupy a narrow high-valued band.
 
 ### Selection and order
 
@@ -163,7 +165,7 @@ npm run summarize -- -v     # Or --verbose: full API response per newly requeste
 npm run serve               # Restart preview to display the saved outcomes
 ```
 
-This requests three short scientific sentences about the question, approach, and principal result/qualification, grounded in the **complete cached paper text**, not just its abstract. The summary appears above the still-visible abstract, labelled “AI summary.” Output formatting is checked, but factual accuracy and exact sentence count cannot be guaranteed; read the paper for scientific conclusions. No evidence schema or personalized relevance text is generated.
+This requests three short scientific sentences about the question, approach, and principal result/qualification, grounded in the **complete cached paper text**, not just its abstract. The summary is labelled “AI summary” and stays visible above an “Abstract” disclosure, collapsed by default for featured papers. PDF and arXiv links remain visible outside the disclosure, including when a summary is unavailable. Output formatting is checked, but factual accuracy and exact sentence count cannot be guaranteed; read the paper for scientific conclusions. No evidence schema or personalized relevance text is generated.
 
 The page distinguishes **exhausted token budget**, **API unavailable**, **HTML unavailable**, and **summarization error**. Before the command runs, it says “Summary unavailable: not generated.” Neither summary text nor availability can change scores, featured picks, or ordering. Other postings have no summaries.
 

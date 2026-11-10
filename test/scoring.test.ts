@@ -76,7 +76,7 @@ test('SQLite vector cache isolates models, content edits, and input roles', asyn
   } finally { db.close(); }
 });
 
-test('scores use the strongest profile, render on every entry, and remain fixed after publication', async () => {
+test('scores use the strongest profile, stay hidden in HTML, and remain fixed after publication', async () => {
   const db = openAppDatabase(':memory:');
   let calls = 0;
   let disposed = false;
@@ -103,13 +103,15 @@ test('scores use the strongest profile, render on every entry, and remain fixed 
     assert.deepEqual(scored.featuredIds, digest.featuredIds);
     assert.deepEqual(scored.papers, digest.papers);
     const html = renderDigest(scored);
-    assert.equal((html.match(/class="score" title=/g) ?? []).length, batch.papers.length);
+    assert.doesNotMatch(html, /class="score"|Closest profile:|Keywords:|Feedback:|Relevance scores:/);
     for (const paper of batch.papers) {
-      assert.ok(html.includes(`>${scored.ranking!.scores[paper.id].total.toFixed(3)}</small>`));
+      assert.ok(!html.includes(`>${scored.ranking!.scores[paper.id].total.toFixed(3)}</small>`));
+      assert.ok(Number.isFinite(scored.ranking!.scores[paper.id].total));
     }
     assert.equal(scored.ranking!.featured.length, 6);
-    assert.match(html, /Keywords: .*Feedback: 0.500/);
-    assert.match(html, /Closest profile: Sensing/);
+    assert.match(html, /For you/);
+    assert.match(html, /Adjacent topic/);
+    assert.match(html, /Wildcard/);
     assert.deepEqual(latestDigest(db, ['quant-ph']), scored);
     const again = await scoreDigest(db, digest, [{ ...profiles[0], subjects: ['Changed'] }], async () => {
       throw new Error('Published scores must not initialize the model again');

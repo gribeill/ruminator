@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
+import { parseHTML } from 'linkedom';
 import { categoriesFrom, parseFeed, pdfUrl } from '../src/arxiv.ts';
 import { createDigest } from '../src/digest.ts';
 import { renderDigest } from '../src/render.ts';
@@ -108,6 +109,47 @@ test('HTML expands only remaining titles, links every PDF, and escapes untrusted
   assert.doesNotMatch(escaped, /<script>|<img/);
   assert.match(escaped, /&lt;script&gt;/);
   assert.match(escaped, /&amp; text/);
+});
+
+test('standalone page uses XMin-like typography and neutral panels with native link colours', () => {
+  const { document } = parseHTML(renderDigest(createDigest([batch])));
+  const css = document.querySelector('style')!.textContent;
+  assert.match(css, /max-width: 800px/);
+  assert.match(css, /font-family: Optima, Candara, Calibri, Arial, sans-serif/);
+  assert.match(css, /border-bottom: 1px dashed #ddd/);
+  assert.match(css, /background: #eee; padding: 5px; border-radius: 5px/);
+  assert.match(css, /background: #f9f9f9; border-left: 5px solid #ccc/);
+  assert.match(css, /\.cow \{ margin: 0 0 0 auto/);
+  assert.doesNotMatch(css, /(?:^|\})\s*a(?::(?:link|visited))?\s*\{/);
+  assert.equal(document.querySelector('nav, footer'), null);
+  assert.equal(document.querySelectorAll('link[rel="stylesheet"]').length, 1); // Local KaTeX only.
+  assert.equal(document.querySelector('script'), null);
+});
+
+test('featured abstracts default closed while PDF/arXiv links remain outside the disclosure', () => {
+  const { document } = parseHTML(renderDigest(createDigest([batch])));
+  const featured = document.querySelectorAll('article');
+  assert.equal(featured.length, 6);
+  for (const article of featured) {
+    const details = article.querySelector('details.featured-abstract')!;
+    assert.ok(details);
+    assert.equal(details.hasAttribute('open'), false);
+    assert.equal(details.querySelector('summary')!.textContent, 'Abstract');
+    assert.ok(details.querySelector('p.abstract')!.textContent.trim());
+    assert.equal(details.querySelectorAll('a').length, 0);
+    const links = article.querySelectorAll('a');
+    assert.equal(links.length, 2);
+    assert.equal(links[0].textContent, 'PDF');
+    assert.match(links[1].textContent, /^arXiv:/);
+    for (const link of links) assert.equal(link.closest('details'), null);
+  }
+  // The remaining postings still reveal their abstracts AND links together.
+  const remaining = [...document.querySelectorAll('details')].filter(d => !d.closest('article'));
+  assert.equal(remaining.length, 3);
+  for (const details of remaining) {
+    assert.ok(details.querySelector('p.abstract'));
+    assert.equal(details.querySelectorAll('a').length, 2);
+  }
 });
 
 test('HTTP preview serves the same saved page on refresh, with no generation', async () => {

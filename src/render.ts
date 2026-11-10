@@ -11,8 +11,11 @@ const cow = String.raw`            ^__^
                 ||----w |
                 ||     ||`;
 
-function abstract(paper: Paper): string {
-  return `<p class="abstract">${renderMathText(paper.abstract)}</p><p><a href="${escape(pdfUrl(paper))}">PDF</a> · <a href="https://arxiv.org/abs/${escape(paper.id)}v${paper.version}">arXiv:${escape(paper.id)}</a></p>`;
+function abstract(paper: Paper, collapsible = false): string {
+  const text = `<p class="abstract">${renderMathText(paper.abstract)}</p>`;
+  // Keep links outside the featured disclosure so they remain visible when closed.
+  const body = collapsible ? `<details class="featured-abstract"><summary>Abstract</summary>${text}</details>` : text;
+  return `${body}<p><a href="${escape(pdfUrl(paper))}">PDF</a> · <a href="https://arxiv.org/abs/${escape(paper.id)}v${paper.version}">arXiv:${escape(paper.id)}</a></p>`;
 }
 
 function summary(paper: Paper, digest: Digest): string {
@@ -22,16 +25,6 @@ function summary(paper: Paper, digest: Digest): string {
   }
   const reason = result ? summaryUnavailableLabel(result.status) : 'not generated';
   return `<p class="summary-unavailable">Summary unavailable: ${escape(reason)}</p>`;
-}
-
-function scoreLabel(paper: Paper, digest: Digest): string {
-  const semantic = digest.semantic?.papers[paper.id];
-  if (!semantic) return '<small class="score">unscored</small>';
-  const profile = digest.semantic!.profiles.find(p => p.id === semantic.profileId);
-  const score = digest.ranking?.scores[paper.id];
-  const breakdown = score ? `Semantic: ${score.semantic.toFixed(3)}; Keywords: ${score.keywords.toFixed(3)}; Feedback: ${score.feedback.toFixed(3)} (neutral). ` : '';
-  const tooltip = `${breakdown}Closest profile: ${profile?.title ?? semantic.profileId}`;
-  return `<small class="score" title="${escape(tooltip)}">${(score?.total ?? semantic.score).toFixed(3)}</small>`;
 }
 
 function authors(paper: Paper): string {
@@ -60,22 +53,29 @@ export function renderDigest(digest: Digest): string {
 <title>ruminator · ${escape(digest.date)}</title>
 <link rel="stylesheet" href="/assets/katex/katex.min.css">
 <style>
-body { max-width: 54rem; margin: 2rem auto; padding: 0 1rem; font: 17px/1.55 system-ui, sans-serif; color: #222; background: #fff; }
+/* Approximate the personal site's XMin theme without importing Hugo navigation/assets. */
+body { max-width: 800px; margin: auto; padding: 1em; line-height: 1.5; font-family: Optima, Candara, Calibri, Arial, sans-serif; color: #000; background: #fff; }
 h1, h2, h3 { line-height: 1.3; }
 h3 { font-size: 1.1rem; }
-.brand { display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap; }
-.cow { margin: 0 0 0 auto; font: 12px/1.2 monospace; white-space: pre; }
-article { margin: 2rem 0; }
+header { border-bottom: 1px dashed #ddd; padding-bottom: 1em; }
+.brand { display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap; background: #eee; padding: 5px; border-radius: 5px; margin: 1em 0; }
+.brand h1 { margin: 0.3em 0; }
+.cow { margin: 0 0 0 auto; font: 12px/1.2 "Lucida Console", Monaco, monospace; white-space: pre; }
+main { hyphens: auto; overflow-wrap: break-word; }
+main > section + section { border-top: 1px dashed #ddd; }
+article { margin: 2em 0; }
+article + article { border-top: 1px dashed #ddd; padding-top: 1em; }
 .abstract { white-space: pre-wrap; }
-.paper-summary { border-left: 2px solid #ddd; padding-left: 1rem; }
+.paper-summary { background: #f9f9f9; border-left: 5px solid #ccc; padding: 3px 1em; }
 .text-label, .summary-unavailable { font-size: 0.85rem; color: #555; }
 .text-label { font-weight: 600; margin-bottom: 0; }
 .katex { white-space: normal; }
 .katex-display { overflow-x: auto; overflow-y: hidden; }
 summary { cursor: pointer; }
 details { margin: 1rem 0; }
-a { color: #174b92; }
-.score, .selection { font-size: 0.85rem; font-weight: normal; color: #555; white-space: nowrap; margin-left: 0.5rem; }
+/* Links intentionally inherit browser defaults, including visited-link colours. */
+.selection { background: #eee; padding: 2px 5px; border-radius: 5px; }
+.selection { font-size: 0.85rem; font-weight: normal; color: #555; white-space: nowrap; margin-left: 0.5rem; }
 .authors { display: block; font-size: 0.85rem; color: #555; margin: 0.2rem 0; }
 </style>
 </head>
@@ -83,16 +83,13 @@ a { color: #174b92; }
 <header><div class="brand"><h1>ruminator</h1>
 <pre class="cow" aria-hidden="true">${escape(cow)}</pre></div>
 <p>${escape(digest.categories.join(', '))} · Announcement: <time datetime="${escape(digest.date)}">${escape(digest.date)}</time> · ${digest.papers.length} papers</p>
-<p>Latest downloaded announcement batch, including cross-listings; revisions excluded.</p>
-<p>${digest.ranking ? 'Relevance scores: 0–1, not probabilities. Hover for semantic/keyword/feedback components. The remaining list balances relevance and topic diversity, so scores need not decrease monotonically.' : 'Ranking not yet saved. Run npm run score to score and order this batch locally.'}</p></header>
 <main>
 <section><h2>${digest.ranking ? 'Featured papers' : 'Random picks'}</h2>
-<p>${digest.ranking ? 'Four relevant picks, one adjacent topic, and one gently relevance-weighted wildcard, when enough papers are available.' : 'Temporary random selection; run scoring to generate recommendations.'}</p>
-${featured.map(p => `<article><h3>${renderMathText(p.title)} ${scoreLabel(p, digest)} ${selectionLabel(p.id, digest)}</h3>${authors(p)}${summary(p, digest)}<p class="text-label">Abstract</p>${abstract(p)}</article>`).join('\n')}
+${featured.map(p => `<article><h3>${renderMathText(p.title)} ${selectionLabel(p.id, digest)}</h3>${authors(p)}${summary(p, digest)}${abstract(p, true)}</article>`).join('\n')}
 ${digest.papers.length === 0 ? '<p>No new papers in this announcement batch.</p>' : ''}
 </section>
 <section><h2>Other postings (${rest.length})</h2>
-${rest.map(p => `<details><summary>${renderMathText(p.title)} ${scoreLabel(p, digest)}${authors(p)}</summary>${abstract(p)}</details>`).join('\n')}
+${rest.map(p => `<details><summary>${renderMathText(p.title)}${authors(p)}</summary>${abstract(p)}</details>`).join('\n')}
 </section>
 </main>
 </body>
