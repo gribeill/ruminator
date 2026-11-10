@@ -3,7 +3,7 @@ import { loadEnvFile } from 'node:process';
 import { dirname, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { categoriesFrom } from './arxiv.ts';
-import { clearSummaries, openAppDatabase, openPaperDatabase } from './store.ts';
+import { clearSummaries, openAppDatabase, openPaperDatabase, readVotes, saveVote } from './store.ts';
 import { loadDailyDigest, loadSavedDigest } from './load.ts';
 import { createDigestServer } from './server.ts';
 import { createBgeProvider } from './bge.ts';
@@ -99,7 +99,7 @@ async function main(): Promise<void> {
     if (command === 'start' || command === 'score') {
       if (!digest.ranking) {
         console.log('Computing local scores and diversity-aware ranking (cached embeddings are reused)…');
-        digest = await scoreDigest(appDb, digest, loadProfiles(values.profiles), () => createBgeProvider({ offline: values.offline }), console.log, config.scoring.weights);
+        digest = await scoreDigest(appDb, digest, loadProfiles(values.profiles), () => createBgeProvider({ offline: values.offline }), console.log, config.scoring.weights, config.feedback);
       }
       console.log('Using saved relevance scores, featured selections, and MMR listing order.');
     }
@@ -122,8 +122,11 @@ async function main(): Promise<void> {
     papersDb.close();
   }
   if (['fetch', 'score', 'text', 'summarize'].includes(command)) return;
-  const server = createDigestServer(digest!);
-  server.on('error', error => { console.error(error.message); process.exitCode = 1; });
+  const votesDb = openAppDatabase(appPath);
+  const server = createDigestServer(digest!, { read: () => readVotes(votesDb), write: (paper, value) => saveVote(votesDb, paper, value) });
+  const closeVotes = () => { if (votesDb.isOpen) votesDb.close(); };
+  server.once('close', closeVotes);
+  server.on('error', error => { closeVotes(); console.error(error.message); process.exitCode = 1; });
   server.listen(port, '127.0.0.1', () => console.log(`Browse http://127.0.0.1:${port} (announcement ${digest!.date})`));
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     process.once(signal, () => server.close());

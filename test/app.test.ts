@@ -98,7 +98,7 @@ test('HTML expands only remaining titles, links every PDF, and escapes untrusted
   assert.ok(html.includes(String.raw`(oo)\_______`));
   assert.ok(html.includes(String.raw`||----w |`));
   assert.doesNotMatch(html, /arXiv digest|arxiv-digest/);
-  assert.equal((html.match(/<article>/g) ?? []).length, 6);
+  assert.equal((html.match(/<article\b/g) ?? []).length, 6);
   assert.equal((html.match(/<details>/g) ?? []).length, 3);
   assert.equal((html.match(/>PDF<\/a>/g) ?? []).length, 9);
   for (const paper of batch.papers) assert.ok(html.includes(pdfUrl(paper)));

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { parse } from 'smol-toml';
 import { BGE_CONFIG } from './bge.ts';
 import { validateWeights, type ScoreWeights } from './ranking.ts';
+import { validateFeedbackConfig, type FeedbackConfig } from './feedback.ts';
 
 export interface TokenizerConfig {
   implementation: 'gpt-tokenizer';
@@ -31,6 +32,7 @@ export interface Config {
   scoring: { weights: ScoreWeights };
   tokenizer: TokenizerConfig;
   summaries: SummaryLimits;
+  feedback: FeedbackConfig;
 }
 
 export function validateTokenizer(config: TokenizerConfig): void {
@@ -54,7 +56,7 @@ export function parseConfig(text: string): Config {
     for (const key of keys) if (!(key in record)) throw new Error(`Missing configuration key: ${path}.${key}`);
     return record;
   }
-  table(raw, ['llm', 'embedding', 'scoring', 'tokenizer', 'summaries'], 'config');
+  table(raw, ['llm', 'embedding', 'scoring', 'tokenizer', 'summaries', 'feedback'], 'config');
   const llm = table(raw.llm, ['provider', 'model'], 'llm');
   if (llm.provider !== 'cloudflare') throw new Error('Changing LLM provider away from cloudflare is not yet supported');
   if (typeof llm.model !== 'string' || !llm.model.trim()) throw new Error('llm.model must be a nonempty model ID');
@@ -71,7 +73,9 @@ export function parseConfig(text: string): Config {
   const summaries = table(raw.summaries,
     ['run_input_tokens', 'paper_input_tokens', 'max_completion_tokens', 'context_tokens'], 'summaries') as unknown as SummaryLimits;
   validateSummaryLimits(summaries);
-  return { llm: { provider: 'cloudflare', model: llm.model }, embedding: { ...BGE_CONFIG }, scoring: { weights: { ...weights } }, tokenizer: { ...tokenizer }, summaries: { ...summaries } };
+  const feedback = table(raw.feedback, ['min_similarity', 'near_duplicate_similarity'], 'feedback') as unknown as FeedbackConfig;
+  validateFeedbackConfig(feedback);
+  return { llm: { provider: 'cloudflare', model: llm.model }, embedding: { ...BGE_CONFIG }, scoring: { weights: { ...weights } }, tokenizer: { ...tokenizer }, summaries: { ...summaries }, feedback: { ...feedback } };
 }
 
 export function loadConfig(path = 'config.toml'): Config {

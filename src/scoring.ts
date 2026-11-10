@@ -3,7 +3,8 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { Digest } from './digest.ts';
 import { normalize, type EmbeddingInput, type EmbeddingProvider } from './embeddings.ts';
 import type { Profile } from './profiles.ts';
-import { readRanking, readSemanticScores, saveRanking, saveSemanticScores } from './store.ts';
+import { captureFeedback, readRanking, readSemanticScores, saveRanking, saveSemanticScores } from './store.ts';
+import { DEFAULT_FEEDBACK_CONFIG, validateFeedbackConfig, type FeedbackConfig, type FeedbackSnapshot } from './feedback.ts';
 import { rankPapers, DEFAULT_WEIGHTS, type ScoreWeights } from './ranking.ts';
 
 export interface PaperScore {
@@ -42,6 +43,7 @@ export async function scoreDigest(
   db: DatabaseSync, digest: Digest, profiles: Profile[], createProvider: () => Promise<EmbeddingProvider>,
   log: (message: string) => void = console.log,
   weights: ScoreWeights = DEFAULT_WEIGHTS,
+  feedbackConfig: FeedbackConfig = DEFAULT_FEEDBACK_CONFIG,
 ): Promise<Digest> {
   const existing = readSemanticScores(db, digest);
   const ranking = readRanking(db, digest);
@@ -49,10 +51,18 @@ export async function scoreDigest(
   // Freeze semantic inputs independently of the explicit lexical vocabulary.
   const embeddingProfiles = existing?.profiles ?? profiles;
   if (!embeddingProfiles.length) throw new Error('At least one research profile is required');
+  validateFeedbackConfig(feedbackConfig);
+  const feedbackInput = captureFeedback(db, digest, feedbackConfig);
   const provider = await createProvider();
   try {
     if (existing && existing.fingerprint !== provider.fingerprint) {
       throw new Error('Embedding model changed; reset the application DB before ranking');
+    }
+    const feedback: FeedbackSnapshot = { ...feedbackInput, fingerprint: provider.fingerprint, examples: [] };
+    for (const vote of feedbackInput.votes) {
+      // Always use the current embedding space, reusing compatible cached inputs.
+      const vector = await cachedEmbedding(db, provider, { kind: 'paper', title: vote.paper.title, text: vote.paper.abstract });
+      feedback.examples.push({ ...vote, vector });
     }
     const queries: number[][] = [];
     if (!existing) {
@@ -80,7 +90,7 @@ export async function scoreDigest(
     const keywordProfiles = semantic.profiles.map(profile => ({
       ...profile, keywords: profiles.find(p => p.id === profile.id)?.keywords ?? [],
     }));
-    const ranked = saveRanking(db, digest, rankPapers(digest, semantic, vectors, keywordProfiles, weights));
+    const ranked = saveRanking(db, digest, rankPapers(digest, semantic, vectors, keywordProfiles, weights, feedback));
     return { ...digest, semantic, ranking: ranked };
   } finally { await provider.dispose?.(); }
 }

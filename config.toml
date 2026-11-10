@@ -18,10 +18,16 @@ pooling = "cls"
 
 [scoring.weights]
 # Nonnegative weights must sum to 1. Changes affect new rankings only.
-# Feedback remains neutral (0.5) until voting is implemented.
+# Feedback remains neutral (0.5) without nearby voted examples.
 semantic = 0.60
 keywords = 0.25
 feedback = 0.15
+
+[feedback]
+# Experimental cosine thresholds; only future ranking runs use changed values.
+min_similarity = 0.90
+near_duplicate_similarity = 0.95
+# Latest vote wins among near-duplicate examples. Evidence is shrunk toward 0.5.
 
 [tokenizer]
 # Local counting only: no embedding model or API call is needed.

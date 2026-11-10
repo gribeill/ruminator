@@ -1,4 +1,22 @@
 -- Current development schema only; recreate this DB when the schema changes.
+-- Append-only changes preserve vote history; IDs intentionally exclude versions.
+CREATE TABLE IF NOT EXISTS vote_events (
+  event_id INTEGER PRIMARY KEY,
+  arxiv_id TEXT NOT NULL,
+  value INTEGER NOT NULL CHECK (value IN (-1, 0, 1)),
+  paper_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS vote_events_by_paper ON vote_events (arxiv_id, event_id);
+
+-- Capture feedback before the first asynchronous scoring step, not when publishing.
+CREATE TABLE IF NOT EXISTS feedback_snapshots (
+  announcement_date TEXT NOT NULL,
+  categories_json TEXT NOT NULL,
+  snapshot_json TEXT NOT NULL,
+  PRIMARY KEY (announcement_date, categories_json)
+);
+
 -- Runs record the latest invoked settings and retain input spent across invocations.
 CREATE TABLE IF NOT EXISTS summary_runs (
   announcement_date TEXT NOT NULL,

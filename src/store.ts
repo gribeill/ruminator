@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
-import type { Batch } from './arxiv.ts';
+import type { Batch, Paper } from './arxiv.ts';
+import type { FeedbackConfig, FeedbackInput, VotedPaper, Votes, VoteValue } from './feedback.ts';
 import { createDigest, type Digest } from './digest.ts';
 import type { SemanticScores } from './scoring.ts';
 import type { Ranking } from './ranking.ts';
@@ -25,6 +26,61 @@ export function openAppDatabase(path: string): DatabaseSync {
 
 export function openPaperDatabase(path: string): DatabaseSync {
   return openDatabase(path, 'papers');
+}
+
+interface VoteRow {
+  event_id: number;
+  arxiv_id: string;
+  value: -1 | 1;
+  paper_json: string;
+  created_at: string;
+}
+
+function activeVoteRows(db: DatabaseSync): VoteRow[] {
+  return db.prepare(`SELECT * FROM vote_events WHERE event_id IN
+    (SELECT MAX(event_id) FROM vote_events GROUP BY arxiv_id) AND value != 0 ORDER BY event_id`).all() as unknown as VoteRow[];
+}
+
+export function readVotes(db: DatabaseSync): Votes {
+  return Object.fromEntries(activeVoteRows(db).map(row => [row.arxiv_id, row.value]));
+}
+
+/** Explicit desired state makes form resubmissions idempotent; never mutate old events. */
+export function saveVote(db: DatabaseSync, paper: Paper, value: VoteValue): void {
+  if (![-1, 0, 1].includes(value) || !/^(?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?\/\d{7})$/.test(paper.id)) {
+    throw new Error('Invalid vote or base arXiv ID');
+  }
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const current = db.prepare('SELECT value FROM vote_events WHERE arxiv_id = ? ORDER BY event_id DESC LIMIT 1')
+      .get(paper.id) as { value: VoteValue } | undefined;
+    if ((current?.value ?? 0) !== value) {
+      db.prepare('INSERT INTO vote_events (arxiv_id, value, paper_json, created_at) VALUES (?, ?, ?, ?)')
+        .run(paper.id, value, JSON.stringify(paper), new Date().toISOString());
+    }
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+/** Freeze feedback once, before inference: votes arriving mid-run belong to later digests. */
+export function captureFeedback(db: DatabaseSync, digest: Digest, config: FeedbackConfig): FeedbackInput {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const previous = db.prepare('SELECT snapshot_json FROM feedback_snapshots WHERE announcement_date = ? AND categories_json = ?')
+      .get(...digestKey(digest)) as { snapshot_json: string } | undefined;
+    let snapshot: FeedbackInput;
+    if (previous) snapshot = JSON.parse(previous.snapshot_json);
+    else {
+      const votes: VotedPaper[] = activeVoteRows(db).map(row => ({
+        eventId: row.event_id, paper: JSON.parse(row.paper_json), value: row.value, createdAt: row.created_at,
+      }));
+      snapshot = { capturedAt: new Date().toISOString(), config: { ...config }, votes };
+      db.prepare('INSERT INTO feedback_snapshots (announcement_date, categories_json, snapshot_json) VALUES (?, ?, ?)')
+        .run(...digestKey(digest), JSON.stringify(snapshot));
+    }
+    db.exec('COMMIT');
+    return snapshot;
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 
 /** Paper-version HTML/text caches survive application DB resets. */

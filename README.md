@@ -5,8 +5,9 @@ A local, minimal arXiv browser, with a small ASCII cow to keep you company while
 - Six featured papers: four relevance picks, one adjacent topic, and one weighted-random wildcard, with titles, optional full-text AI summaries, abstracts, and PDF links.
 - Every remaining paper in a diversity-aware order, as an expandable title revealing its abstract and PDF link.
 - Compact authors (up to four; first two … last two for longer lists), with all names in a tooltip.
+- Understated + / − relevance votes beside the PDF/arXiv links for every paper.
 
-Selections and display order are fixed once ranking is saved for an announcement batch. Math in titles and abstracts is rendered with KaTeX, including `$…$`, `$$…$$`, `\(…\)`, and `\[…\]`. Styles and fonts are served locally, with no CDN or browser JavaScript. Unsupported/malformed math stays visible as escaped source text. Numeric relevance scores and their tooltips are hidden in the reading view; scores remain stored for ranking and inspection. Full-text summaries are generated only by an explicit paid command; voting is not implemented yet.
+Selections and display order are fixed once ranking is saved for an announcement batch. Math in titles and abstracts is rendered with KaTeX, including `$…$`, `$$…$$`, `\(…\)`, and `\[…\]`. Styles and fonts are served locally, with no CDN or browser JavaScript. Unsupported/malformed math stays visible as escaped source text. Numeric relevance scores and their tooltips are hidden in the reading view; scores remain stored for ranking and inspection. Full-text summaries are generated only by an explicit paid command. Votes affect future ranking runs, never an already-saved ranking.
 
 The standalone preview loosely matches the personal site's Hugo **XMin** theme: an 800px reading column, Optima/Candara/Calibri system font stack, light-grey panels, dashed separators, and browser-default link/visited colours. It retains ruminator's cow and reading layout without copying the site's navigation/footer or loading remote theme assets.
 
@@ -49,7 +50,7 @@ The daily cache tracks **download time**, not announcement date: weekends can re
 Storage is split into two databases (both ignored by Git):
 
 - **`data/papers.sqlite`** — downloaded paper information, source metadata, announcement archives, and download freshness. Keep this file when changing application schemas.
-- **`data/app.sqlite`** — generated digests, embeddings, scores, summary runs/outcomes, and reusable successful summaries; future votes also belong here.
+- **`data/app.sqlite`** — generated digests, embeddings, scores, summary runs/outcomes, reusable successful summaries, vote history, and frozen feedback inputs.
 
 Override them independently with `--papers-db data/another-papers.sqlite` and `--app-db data/another-app.sqlite`. They must be different files. Category combinations have separate saved digests. Restart the preview server after downloading another batch; a running preview always shows its original snapshot. If downloading fails, the command reports the error rather than silently showing stale data; use `serve` explicitly to view saved data.
 
@@ -60,6 +61,7 @@ Edit **[config.toml](config.toml)** for model documentation, score weights, and 
 - **LLM:** `cloudflare` with configurable model ID, initially `openai/gpt-6-luna`. Changing provider away from Cloudflare is not yet supported. Only `summarize` makes paid requests; full-text retrieval is a separate explicit command below.
 - **Embeddings:** documents the existing pinned BGE model/revision, q8 precision, and CLS pooling. Changing embedding configuration is not yet supported and is rejected, rather than silently using incompatible preprocessing or caches.
 - **Score weights:** nonnegative semantic/keyword/feedback weights must sum to 1. They apply to new rankings and are saved with them; existing ranked digests and embedding caches are unchanged. Other selection/MMR constants remain in `src/ranking.ts`.
+- **Feedback:** `[feedback]` sets raw cosine cutoffs for future runs: `min_similarity = 0.90`, `near_duplicate_similarity = 0.95`. These are conservative experimental defaults, not calibrated constants. Thresholds and votes are captured when a new scoring run starts and retained if it resumes.
 - **Tokenizer:** `gpt-tokenizer` runs `o200k_base` entirely locally, with no model weights, downloads, or inference calls. This is an **approximation**, not a verified tokenizer match or upper bound for `gpt-6-luna`. Configurable text-count headroom and per-message/request allowances account conservatively for unknown framing. Other implementations/encodings are not yet supported.
 
 The `estimatePromptTokens(messages, config.tokenizer)` function in `src/tokenizer.ts` counts the complete supplied message text, including instructions, without truncation. It returns raw text tokens and an estimated input total (`ceil(text tokens × safety multiplier) + message allowances + request allowance`), explicitly marked approximate. It treats control-token-looking paper text as ordinary data. The summary loop applies the `[summaries]` limits to this estimate, reserving output space separately.
@@ -122,7 +124,7 @@ relevance = 0.60 * semantic + 0.25 * keywords + 0.15 * feedback
 
 - **Semantic:** maximum cosine similarity across profiles, mapped by `(cosine + 1) / 2` to a fixed [0, 1] scale. No daily min-max stretching.
 - **Keywords:** only the explicit `### Keywords` bullets in each profile. Each bullet is one phrase or group of semicolon-separated aliases, e.g. `tunable coupler; tunable coupling`. Match whole normalized phrases (case, punctuation/hyphens, simple plurals), never partial coverage or inferred Subjects words. Title hits count twice as much as abstract hits; aliases and repetitions contribute at most once per group. Evidence saturates as `1 - exp(-evidence / 2)`. A missing/empty keyword list scores a neutral **0.5** for that profile; a configured list with no hits scores **0**. Take the strongest profile score, including neutral values (an unspecified profile therefore gives a 0.5 floor).
-- **Feedback:** a neutral **0.5** until voting is implemented.
+- **Feedback:** a neutral **0.5** without nearby voted examples. Similar upvotes raise it and downvotes lower it, using the configurable thresholds and conservative weighting below.
 
 Score components and closest semantic profiles remain available in the application's saved SQLite snapshots, not in page tooltips. These numbers are not probabilities, quality assessments, or percentiles; BGE similarities naturally occupy a narrow high-valued band.
 
@@ -136,6 +138,20 @@ Score components and closest semantic profiles remain available in the applicati
 Random draws are date/category-seeded; candidate IDs break ties deterministically. Featured slots avoid identical titles and cosine similarities ≥0.95 whenever alternatives exist. Very small or redundant batches relax this preference to fill up to six distinct IDs. Every remaining paper stays available. Defaults are collected in `src/ranking.ts` and saved with each ranking; they are initial settings, not calibrated estimates of scientific importance.
 
 Embeddings are cached in SQLite by input content and model/preprocessing fingerprint. Changed Subjects/title or paper text require new vectors; keyword-only edits and ignored negative sections do not. Explicit keyword lists are snapshotted separately with each ranking. Semantic snapshots retain their profile/model context. The first completed ranking saves score components, featured roles, and the entire remaining order; later profile/model/configuration changes apply only to future digests. Interrupted scoring reuses completed vectors and never publishes a partial ranking. A fetch-only or not-yet-ranked digest has a temporary random preview; run `score` to replace it with its first fixed ranked view. To experiment with new keyword lists for the same saved batch, use a fresh `--app-db` path with `--offline`, preserving the existing digest and paper cache.
+
+## Voting and future recommendations
+
+Start or restart `npm run serve` (or `npm start`) to use the local voting controls. Every paper has + / − buttons on the same action row as its PDF/arXiv links. The row stays visible for the featured six, outside their collapsed abstracts; remaining postings reveal their links and buttons only when expanded. Votes mean **more/less relevant to your interests**, not scientific quality. The selected button shows your current vote: click it again to clear, or click the other to change. Forms work without browser JavaScript and redirect back to the same paper anchor. No nearby-paper explanations or numeric scores are displayed.
+
+Votes share one **base arXiv ID across all versions**, announcement batches, and category combinations. The application database stores an append-only history of changes with timestamps and the paper metadata you voted on. Repeated submissions of the same desired state do not duplicate events. Current votes refresh independently of the saved paper data, selections, summaries, and ordering. The local POST endpoint accepts only papers in the served digest, checks a per-server form token and same-origin/loopback headers, and never contacts a model or recomputes rankings.
+
+At the start of a new scoring run, active votes and feedback thresholds are captured before any model initialization or inference. Votes arriving afterward affect only subsequent runs; an interrupted run resumes its original snapshot. Published rankings are never updated by votes, clearing votes, or changing thresholds. Voted title/abstract inputs are embedded using the **same provider/model fingerprint as the new papers**, reusing compatible vectors from cache. Frozen feedback inputs, vectors, model identity, and configuration remain saved for inspection/reproduction.
+
+For each new paper, retain voted examples whose raw cosine similarity is at least `min_similarity` (default **0.90**). Process newest votes first; drop examples with the same base ID or similarity at least `near_duplicate_similarity` (default **0.95**) to an already retained example. This prevents near-duplicates from multiplying evidence; the latest vote wins in conflicting duplicate groups. Unrelated votes have no effect. These are simple greedy groups, not a topic classifier.
+
+For each retained example, `w = (cosine - min_similarity) / (1 - min_similarity)`; the feedback component is `0.5 + 0.5 * sum(w * vote) / (1 + sum(w))`, with vote values +1/-1. The extra neutral pseudocount shrinks sparse evidence toward 0.5: one perfectly matching up/down vote gives 0.75/0.25, and evidence exactly at the cutoff has zero weight. The existing configurable feedback weight (default **0.15**) then enters combined relevance. This initial rule should be evaluated against your judgments rather than treated as calibrated relevance probability.
+
+Keep/backup `data/app.sqlite` if you want to preserve votes. Application DB resets delete vote history as well as generated state; `summarize --clear` does **not** delete votes or feedback snapshots.
 
 ## Featured-paper text cache
 
@@ -208,7 +224,7 @@ rm data/app.sqlite
 npm start -- --offline
 ```
 
-This resets generated digests, embeddings, scores, and all summary outcomes/caches. Rankings are rebuilt locally using the preserved `data/papers.sqlite` and `data/models/`, without arXiv requests or model downloads. Keep the paper database; do not remove the entire `data/` directory. If needed, `npm run serve` reconstructs a basic view without loading the model. Deleting application state is an explicit development reset, not a change to an existing published digest.
+This resets generated digests, embeddings, scores, all summary outcomes/caches, **vote history, and feedback snapshots**. Back up the app database before resetting if you want to preserve votes. Rankings are rebuilt locally using the preserved `data/papers.sqlite` and `data/models/`, without arXiv requests or model downloads. Keep the paper database; do not remove the entire `data/` directory. If needed, `npm run serve` reconstructs a basic view without loading the model. Deleting application state is an explicit development reset, not a change to an existing published digest.
 
 
 ```sh
@@ -235,6 +251,7 @@ The app uses Node's built-in HTTP server and native HTML `<details>` elements; n
 - `src/scoring.ts`: vector caching, cosine scores, and fixed ranking orchestration.
 - `src/ranking.ts`: combined scores, featured selection, wildcard sampling, and MMR ordering.
 - `src/authors.ts`: compact author formatting and display-name normalization.
+- `src/feedback.ts`: configurable similarity-based vote propagation and duplicate suppression.
 - `src/store.ts`, `schema/`: separate paper/application databases and current SQL schemas.
 - `src/math.ts`, `src/render.ts`, `src/server.ts`: safe math/HTML rendering, local KaTeX assets, and preview.
 - `src/config.ts`, `config.toml`: validated, commented model/scoring/tokenizer configuration.

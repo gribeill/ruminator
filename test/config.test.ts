@@ -43,6 +43,10 @@ test('configuration rejects typos, unsupported backends, and invalid numeric set
     [/^paper_input_tokens = .*$/m, 'paper_input_tokens = 1.5', /Summary limits/],
     [/^max_completion_tokens = .*$/m, 'max_completion_tokens = -1', /Summary limits/],
     [/^context_tokens = .*$/m, 'context_tokens = 0', /Summary limits/],
+    ['min_similarity = 0.90', 'min_similarity = 1.0', /feedback thresholds/],
+    ['min_similarity = 0.90', 'min_similarity = -0.1', /feedback thresholds/],
+    ['near_duplicate_similarity = 0.95', 'near_duplicate_similarity = 0.8', /feedback thresholds/],
+    ['near_duplicate_similarity = 0.95', 'near_duplicate_similarity = nan', /feedback thresholds/],
   ] as const) assert.throws(() => parseConfig(text.replace(from, to)), error);
   assert.throws(() => parseConfig('broken = ['));
 });

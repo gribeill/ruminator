@@ -2,6 +2,7 @@ import type { Paper } from './arxiv.ts';
 import { seededRandom, type Digest } from './digest.ts';
 import type { Profile } from './profiles.ts';
 import type { SemanticScores } from './scoring.ts';
+import { feedbackScore, type FeedbackSnapshot } from './feedback.ts';
 
 export interface ScoreWeights {
   semantic: number;
@@ -21,7 +22,7 @@ export function validateWeights(weights: ScoreWeights): void {
 }
 
 export const RANKING_CONFIG = {
-  version: 'explicit-keywords-mmr-v2',
+  version: 'explicit-feedback-mmr-v3',
   weights: DEFAULT_WEIGHTS,
   feedback: 0.5,
   keywordSaturation: 2,
@@ -51,6 +52,7 @@ export interface Ranking {
   featured: { id: string; role: 'relevant' | 'adjacent' | 'wildcard' }[];
   remainingIds: string[];
   mmrScores: Record<string, number>;
+  feedbackSnapshot?: FeedbackSnapshot;
 }
 
 function tokens(text: string): string[] {
@@ -98,9 +100,10 @@ export function wildcardProbabilities(semanticScores: number[], temperature: num
 }
 
 /** Pure selection/order calculation; normalized vectors must share one model. */
-export function rankPapers(digest: Digest, semantic: SemanticScores, vectors: Record<string, number[]>, keywordProfiles: Profile[] = semantic.profiles, weights: ScoreWeights = DEFAULT_WEIGHTS): Ranking {
+export function rankPapers(digest: Digest, semantic: SemanticScores, vectors: Record<string, number[]>, keywordProfiles: Profile[] = semantic.profiles, weights: ScoreWeights = DEFAULT_WEIGHTS, feedback?: FeedbackSnapshot): Ranking {
   validateWeights(weights);
   const config = { ...RANKING_CONFIG, weights: { ...weights } };
+  if (feedback && feedback.fingerprint !== semantic.fingerprint) throw new Error('Incompatible feedback embedding model');
   const ids = digest.papers.map(p => p.id).sort();
   if (new Set(ids).size !== ids.length) throw new Error('Duplicate paper IDs in ranking input');
   const dimensions = ids.length ? vectors[ids[0]]?.length : 0;
@@ -116,9 +119,10 @@ export function rankPapers(digest: Digest, semantic: SemanticScores, vectors: Re
   for (const paper of digest.papers) {
     const keywords = keywordScore(paper, keywordProfiles);
     const s = semantic.papers[paper.id].score;
+    const f = feedback ? feedbackScore(vectors[paper.id], feedback.examples, feedback.config) : RANKING_CONFIG.feedback;
     scores[paper.id] = {
-      semantic: s, keywords: keywords.score, feedback: RANKING_CONFIG.feedback,
-      total: weights.semantic * s + weights.keywords * keywords.score + weights.feedback * RANKING_CONFIG.feedback,
+      semantic: s, keywords: keywords.score, feedback: f,
+      total: weights.semantic * s + weights.keywords * keywords.score + weights.feedback * f,
       matchedKeywords: keywords.matchedKeywords,
     };
   }
@@ -184,5 +188,5 @@ export function rankPapers(digest: Digest, semantic: SemanticScores, vectors: Re
   }
   return { config, scores,
     keywordProfiles: keywordProfiles.map(p => ({ id: p.id, keywords: [...(p.keywords ?? [])] })),
-    featured, remainingIds, mmrScores };
+    featured, remainingIds, mmrScores, ...(feedback ? { feedbackSnapshot: feedback } : {}) };
 }

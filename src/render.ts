@@ -3,6 +3,23 @@ import type { Digest } from './digest.ts';
 import { escapeHtml as escape, renderMathText } from './math.ts';
 import { compactAuthors, displayName } from './authors.ts';
 import { summaryUnavailableLabel } from './summaries.ts';
+import { paperAnchor, type Votes } from './feedback.ts';
+
+export interface VotingView {
+  votes: Votes;
+  csrfToken: string;
+}
+
+function voteControls(paper: Paper, voting?: VotingView): string {
+  if (!voting) return '';
+  const current = voting.votes[paper.id] ?? 0;
+  return `<form class="vote-controls" method="post" action="/vote">
+<input type="hidden" name="paper" value="${escape(paper.id)}">
+<input type="hidden" name="token" value="${escape(voting.csrfToken)}">
+<button type="submit" name="value" value="${current === 1 ? 0 : 1}" aria-pressed="${current === 1}" aria-label="${current === 1 ? 'Clear upvote' : 'More relevant'}" title="${current === 1 ? 'Clear upvote' : 'More relevant to my interests'}">+</button>
+<button type="submit" name="value" value="${current === -1 ? 0 : -1}" aria-pressed="${current === -1}" aria-label="${current === -1 ? 'Clear downvote' : 'Less relevant'}" title="${current === -1 ? 'Clear downvote' : 'Less relevant to my interests'}">−</button>
+</form>`;
+}
 
 // Keep the cow as literal text, then escape it like any other HTML content.
 const cow = String.raw`            ^__^
@@ -11,11 +28,11 @@ const cow = String.raw`            ^__^
                 ||----w |
                 ||     ||`;
 
-function abstract(paper: Paper, collapsible = false): string {
+function abstract(paper: Paper, collapsible = false, voting?: VotingView): string {
   const text = `<p class="abstract">${renderMathText(paper.abstract)}</p>`;
-  // Keep links outside the featured disclosure so they remain visible when closed.
+  // Keep the action row outside featured abstract disclosures, but inside remaining-paper dropdowns.
   const body = collapsible ? `<details class="featured-abstract"><summary>Abstract</summary>${text}</details>` : text;
-  return `${body}<p><a href="${escape(pdfUrl(paper))}">PDF</a> · <a href="https://arxiv.org/abs/${escape(paper.id)}v${paper.version}">arXiv:${escape(paper.id)}</a></p>`;
+  return `${body}<div class="paper-actions"><span><a href="${escape(pdfUrl(paper))}">PDF</a> | <a href="https://arxiv.org/abs/${escape(paper.id)}v${paper.version}">arXiv:${escape(paper.id)}</a></span>${voteControls(paper, voting)}</div>`;
 }
 
 function summary(paper: Paper, digest: Digest): string {
@@ -39,7 +56,7 @@ function selectionLabel(id: string, digest: Digest): string {
 }
 
 /** Render only stored data; opening the page never generates a new selection. */
-export function renderDigest(digest: Digest): string {
+export function renderDigest(digest: Digest, voting?: VotingView): string {
   const byId = new Map(digest.papers.map(p => [p.id, p]));
   const featuredIds = digest.ranking?.featured.map(p => p.id) ?? digest.featuredIds;
   const featured = featuredIds.map(id => byId.get(id)!);
@@ -77,19 +94,27 @@ details { margin: 1rem 0; }
 .selection { background: #eee; padding: 2px 5px; border-radius: 5px; }
 .selection { font-size: 0.85rem; font-weight: normal; color: #555; white-space: nowrap; margin-left: 0.5rem; }
 .authors { display: block; font-size: 0.85rem; color: #555; margin: 0.2rem 0; }
+.paper-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 0.75em; margin: 1em 0; }
+.vote-controls { display: inline-flex; gap: 0.3em; margin: 0; }
+.vote-controls button { font: inherit; color: #555; cursor: pointer; background: #f9f9f9; border: 1px solid #ccc; border-radius: 3px; min-width: 1.7em; padding: 0 0.35em; }
+.vote-controls button[aria-pressed="true"] { background: #ddd; border-color: #555; }
+.posting { margin: 1em 0; }
+.posting > details { margin-bottom: 0.4em; }
 </style>
 </head>
 <body>
 <header><div class="brand"><h1>ruminator</h1>
 <pre class="cow" aria-hidden="true">${escape(cow)}</pre></div>
 <p>${escape(digest.categories.join(', '))} · Announcement: <time datetime="${escape(digest.date)}">${escape(digest.date)}</time> · ${digest.papers.length} papers</p>
+${voting ? '<p>+ / − mean more/less relevant to your interests, not scientific quality. Votes affect future recommendations; this digest stays fixed.</p>' : ''}
+</header>
 <main>
 <section><h2>${digest.ranking ? 'Featured papers' : 'Random picks'}</h2>
-${featured.map(p => `<article><h3>${renderMathText(p.title)} ${selectionLabel(p.id, digest)}</h3>${authors(p)}${summary(p, digest)}${abstract(p, true)}</article>`).join('\n')}
+${featured.map(p => `<article id="${escape(paperAnchor(p.id))}"><h3>${renderMathText(p.title)} ${selectionLabel(p.id, digest)}</h3>${authors(p)}${summary(p, digest)}${abstract(p, true, voting)}</article>`).join('\n')}
 ${digest.papers.length === 0 ? '<p>No new papers in this announcement batch.</p>' : ''}
 </section>
 <section><h2>Other postings (${rest.length})</h2>
-${rest.map(p => `<details><summary>${renderMathText(p.title)}${authors(p)}</summary>${abstract(p)}</details>`).join('\n')}
+${rest.map(p => `<div class="posting" id="${escape(paperAnchor(p.id))}"><details><summary>${renderMathText(p.title)}${authors(p)}</summary>${abstract(p, false, voting)}</details></div>`).join('\n')}
 </section>
 </main>
 </body>
