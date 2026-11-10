@@ -2,11 +2,11 @@
 
 A local, minimal arXiv browser, with a small ASCII cow to keep you company while you ruminate. Downloads the latest `quant-ph` announcement feed, saves it in SQLite, and displays:
 
-- Six featured papers: four relevance picks, one adjacent topic, and one weighted-random wildcard, with titles, abstracts, and PDF links.
+- Six featured papers: four relevance picks, one adjacent topic, and one weighted-random wildcard, with titles, optional full-text AI summaries, abstracts, and PDF links.
 - Every remaining paper in a diversity-aware order, as an expandable title revealing its abstract and PDF link.
 - Compact authors (up to four; first two … last two for longer lists), with all names in a tooltip.
 
-Selections and display order are fixed once ranking is saved for an announcement batch. Math in titles and abstracts is rendered with KaTeX, including `$…$`, `$$…$$`, `\(…\)`, and `\[…\]`. Styles and fonts are served locally, with no CDN or browser JavaScript. Unsupported/malformed math stays visible as escaped source text. Every ranked paper shows a combined relevance score with a component breakdown in its tooltip. LLM summaries and voting are not implemented yet.
+Selections and display order are fixed once ranking is saved for an announcement batch. Math in titles and abstracts is rendered with KaTeX, including `$…$`, `$$…$$`, `\(…\)`, and `\[…\]`. Styles and fonts are served locally, with no CDN or browser JavaScript. Unsupported/malformed math stays visible as escaped source text. Every ranked paper shows a combined relevance score with a component breakdown in its tooltip. Full-text summaries are generated only by an explicit paid command; voting is not implemented yet.
 
 ## Run locally
 
@@ -47,7 +47,7 @@ The daily cache tracks **download time**, not announcement date: weekends can re
 Storage is split into two databases (both ignored by Git):
 
 - **`data/papers.sqlite`** — downloaded paper information, source metadata, announcement archives, and download freshness. Keep this file when changing application schemas.
-- **`data/app.sqlite`** — generated digests, embeddings, and scores; future votes and summaries also belong here.
+- **`data/app.sqlite`** — generated digests, embeddings, scores, summary runs/outcomes, and reusable successful summaries; future votes also belong here.
 
 Override them independently with `--papers-db data/another-papers.sqlite` and `--app-db data/another-app.sqlite`. They must be different files. Category combinations have separate saved digests. Restart the preview server after downloading another batch; a running preview always shows its original snapshot. If downloading fails, the command reports the error rather than silently showing stale data; use `serve` explicitly to view saved data.
 
@@ -55,14 +55,14 @@ Override them independently with `--papers-db data/another-papers.sqlite` and `-
 
 Edit **[config.toml](config.toml)** for model documentation, score weights, and local summary-token counting settings. All commands accept `--config path/to/config.toml`; the default is the file in the current working directory. Invalid, missing, or unknown settings fail explicitly.
 
-- **LLM:** `cloudflare` with configurable model ID, initially `openai/gpt-6-luna`. Changing provider away from Cloudflare is not yet supported. These settings are reserved for the summary service: no LLM calls are wired yet. Full-text retrieval is a separate explicit command below.
+- **LLM:** `cloudflare` with configurable model ID, initially `openai/gpt-6-luna`. Changing provider away from Cloudflare is not yet supported. Only `summarize` makes paid requests; full-text retrieval is a separate explicit command below.
 - **Embeddings:** documents the existing pinned BGE model/revision, q8 precision, and CLS pooling. Changing embedding configuration is not yet supported and is rejected, rather than silently using incompatible preprocessing or caches.
 - **Score weights:** nonnegative semantic/keyword/feedback weights must sum to 1. They apply to new rankings and are saved with them; existing ranked digests and embedding caches are unchanged. Other selection/MMR constants remain in `src/ranking.ts`.
 - **Tokenizer:** `gpt-tokenizer` runs `o200k_base` entirely locally, with no model weights, downloads, or inference calls. This is an **approximation**, not a verified tokenizer match or upper bound for `gpt-6-luna`. Configurable text-count headroom and per-message/request allowances account conservatively for unknown framing. Other implementations/encodings are not yet supported.
 
-The `estimatePromptTokens(messages, config.tokenizer)` function in `src/tokenizer.ts` counts the complete supplied message text, including instructions, without truncation. It returns raw text tokens and an estimated input total (`ceil(text tokens × safety multiplier) + message allowances + request allowance`), explicitly marked approximate. It treats control-token-looking paper text as ordinary data. Output/reasoning reservations and per-run budget enforcement belong to the forthcoming summary request loop and are not implemented yet.
+The `estimatePromptTokens(messages, config.tokenizer)` function in `src/tokenizer.ts` counts the complete supplied message text, including instructions, without truncation. It returns raw text tokens and an estimated input total (`ceil(text tokens × safety multiplier) + message allowances + request allowance`), explicitly marked approximate. It treats control-token-looking paper text as ordinary data. The summary loop applies the `[summaries]` limits to this estimate, reserving output space separately.
 
-Keep Cloudflare credentials in the ignored `.env`, not `config.toml`. The current CLI does not load `.env` or call the summary provider; a future summary command will explicitly load those settings.
+Keep Cloudflare credentials in the ignored `.env`, not `config.toml`. Only online `summarize` loads `.env`; existing environment variables take precedence. Set `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, and `CLOUDFLARE_GATEWAY_ID`. The adapter uses Cloudflare's account REST chat-completions endpoint with one attempt and no model fallback.
 
 ## Editing research interests
 
@@ -147,11 +147,42 @@ npm run text -- --retry-unavailable # Explicitly retry failures, not successful 
 
 This command uses the latest saved digest for `--categories`, honors the usual database paths, and requires a saved ranking. It does not fetch RSS, load an embedding model, rescore, or change selections/order. `start`, `fetch`, `score`, and `serve` do not automatically retrieve full text; page requests remain offline.
 
-Text comes only from versioned `https://arxiv.org/html/{id}v{version}` pages. **TeX source and PDF extraction are deferred** until HTML coverage proves insufficient. Missing/unusable HTML leaves an explicit unsummarized status in the cache and command output; the abstract stays readable, but is never substituted as full text. LLM summarization itself is not implemented yet, and this retrieval state is not yet displayed on the reading page.
+Text comes only from versioned `https://arxiv.org/html/{id}v{version}` pages. **TeX source and PDF extraction are deferred** until HTML coverage proves insufficient. Missing/unusable HTML leaves an explicit unsummarized status in the cache and command output; the abstract stays readable, but is never substituted as full text. The summary command snapshots missing/unusable HTML as a visible summary-unavailable outcome.
 
 The paper database caches raw HTML, extracted text, SHA-256 text hashes, source URL, extraction version, and retrieval timestamps by arXiv ID/version. These survive application DB resets. Both successes and failures are reused on reruns, including across announcement dates; failures do not automatically expire. Use `--retry-unavailable` if a page becomes available later. Offline cache misses are reported without being persisted as failures. Cached HTML can be re-extracted locally after an extractor-version change, without another request.
 
 Extraction retains article headings, paragraphs, captions, tables, appendices, and equation TeX where supplied. It excludes site navigation and scripts, never executes JavaScript or downloads page assets, and rejects abstract-only pages. It does not recover information contained only in figure images. Requests are sequential with at least three seconds between starts, have a 30-second timeout, and reject downloads larger than 16 MiB rather than truncating them.
+
+## Featured-paper summaries
+
+With a saved ranking and cached HTML text:
+
+```sh
+npm run summarize           # Paid: up to six separate, sequential model requests
+npm run summarize -- -v     # Or --verbose: full API response per newly requested paper
+npm run serve               # Restart preview to display the saved outcomes
+```
+
+This requests three short scientific sentences about the question, approach, and principal result/qualification, grounded in the **complete cached paper text**, not just its abstract. The summary appears above the still-visible abstract, labelled “AI summary.” Output formatting is checked, but factual accuracy and exact sentence count cannot be guaranteed; read the paper for scientific conclusions. No evidence schema or personalized relevance text is generated.
+
+The page distinguishes **exhausted token budget**, **API unavailable**, **HTML unavailable**, and **summarization error**. Before the command runs, it says “Summary unavailable: not generated.” Neither summary text nor availability can change scores, featured picks, or ordering. Other postings have no summaries.
+
+Default limits in `config.toml` are 250,000 estimated input tokens per run, 100,000 per paper, and 2,048 completion tokens per request (including reasoning for the initial OpenAI model). A 102,048-token application context allowance reserves the completion space; it is not a guarantee about arbitrary models. Oversized papers are skipped, never truncated. Once the next eligible request would exceed the remaining run input budget, subsequent uncached requests are skipped even if smaller. Successful cache hits cost no new request tokens. These estimated limits are not hard dollar caps.
+
+**No automatic summary retries**, including after configuration/HTML fixes or process interruption. Each digest freezes its summary configuration on first invocation and stores one outcome per featured paper. Before each request, SQLite reserves its estimated input and records an interrupted/error placeholder atomically. If the process stops during the call, rerunning will not resend it; it can continue with papers never attempted. Reserved input is not refunded for errors. Budget use survives interrupted runs, so restarting does not replenish it. The first explicit summary run adds outcomes to an already-ranked digest, but reruns never rewrite recorded outcomes.
+
+Successful summaries are also cached across digests by paper ID/version/title, extracted-text hash and extraction version, prompt version, provider/model, and output allowance. The cache does not depend on profiles or selection roles. Actual returned model and token usage are stored when available. A new digest has its own run and failure outcomes; only successful summaries are shared. Deleting the application DB deletes both outcomes and caches and can cause paid calls again—do not reset it casually.
+
+To deliberately discard summary state, use the explicit **clear-only** command:
+
+```sh
+npm run summarize -- --clear   # Deletes summaries/outcomes/budgets and exits; no API calls
+npm run summarize -- -v        # Separate, billable regeneration when you choose
+```
+
+`--clear` clears **all digests'** summary outcomes, successful-summary cache entries, and frozen run configurations/budgets in the selected `--app-db`, regardless of `--categories`. Rankings, embeddings, downloaded HTML, and other data are preserved. It does not open the paper database, load credentials, or generate summaries. It works without a saved digest, is never called automatically, and is rejected on other commands. Stop any in-progress summarization before clearing, and restart the preview afterward. This is an intentional override of the fixed-outcome/no-retry policy; subsequent regeneration may incur new charges.
+
+`start`, `fetch`, `score`, `text`, `serve`, and page refreshes never call the summary API. `summarize --offline` is a no-network/no-write mode that leaves saved outcomes intact, unless the explicit `--clear` option is also supplied. Verbose mode prints full responses only for actual requests, not cache hits; raw responses are not stored. It excludes request headers and defensively redacts credentials, but model output itself may contain paper text, so treat redirected logs accordingly.
 
 ## What counts as “today”?
 
@@ -172,7 +203,7 @@ rm data/app.sqlite
 npm start -- --offline
 ```
 
-This resets generated digests, embeddings, and scores. They are rebuilt locally using the preserved `data/papers.sqlite` and `data/models/`, without arXiv requests or model downloads. Keep the paper database; do not remove the entire `data/` directory. If needed, `npm run serve` reconstructs a basic view without loading the model. Deleting application state is an explicit development reset, not a change to an existing published digest.
+This resets generated digests, embeddings, scores, and all summary outcomes/caches. Rankings are rebuilt locally using the preserved `data/papers.sqlite` and `data/models/`, without arXiv requests or model downloads. Keep the paper database; do not remove the entire `data/` directory. If needed, `npm run serve` reconstructs a basic view without loading the model. Deleting application state is an explicit development reset, not a change to an existing published digest.
 
 
 ```sh
@@ -180,7 +211,7 @@ npm test
 npm run typecheck
 ```
 
-Default tests use a recorded RSS excerpt, real SQLite, a loopback HTTP server, and small deterministic vectors for scoring correctness. They do not download models or call arXiv or paid model APIs.
+Default tests use a recorded RSS excerpt, real SQLite, loopback HTTP servers for browsing/retrieval/summary responses, and small deterministic vectors for scoring correctness. They do not download models or call arXiv or paid model APIs.
 
 An explicit real-model integration test checks basic relevance, long-input inference, and offline model reload:
 
@@ -202,7 +233,8 @@ The app uses Node's built-in HTTP server and native HTML `<details>` elements; n
 - `src/store.ts`, `schema/`: separate paper/application databases and current SQL schemas.
 - `src/math.ts`, `src/render.ts`, `src/server.ts`: safe math/HTML rendering, local KaTeX assets, and preview.
 - `src/config.ts`, `config.toml`: validated, commented model/scoring/tokenizer configuration.
-- `src/tokenizer.ts`: local full-prompt token estimates for the forthcoming summary service.
+- `src/tokenizer.ts`: local full-prompt token estimates.
+- `src/summaries.ts`, `src/cloudflare.ts`: budgeted, no-retry summary generation and the Cloudflare adapter.
 - `src/fulltext.ts`: cached, HTML-only featured-paper text retrieval and extraction.
 - `src/cli.ts`: download/preview commands.
 

@@ -115,7 +115,7 @@ test('recreating the application DB preserves source data and rebuilds a digest 
     }), log);
     assert.ok(latestDigest(app, ['quant-ph'])?.semantic);
     assert.deepEqual(papers.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all().map(r => r.name), ['batches', 'feed_downloads', 'paper_authors', 'paper_texts']);
-    assert.deepEqual(app.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all().map(r => r.name), ['digests', 'embeddings', 'rankings', 'semantic_scores']);
+    assert.deepEqual(app.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all().map(r => r.name), ['digest_summaries', 'digests', 'embeddings', 'rankings', 'semantic_scores', 'summary_cache', 'summary_runs']);
     app.close();
     papers.close();
     const sourceBytes = readFileSync(papersPath);

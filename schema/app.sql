@@ -1,4 +1,29 @@
 -- Current development schema only; recreate this DB when the schema changes.
+-- Runs freeze settings and reserve estimated input before any paid request.
+CREATE TABLE IF NOT EXISTS summary_runs (
+  announcement_date TEXT NOT NULL,
+  categories_json TEXT NOT NULL,
+  config_json TEXT NOT NULL,
+  used_input_tokens INTEGER NOT NULL DEFAULT 0,
+  budget_exhausted INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (announcement_date, categories_json)
+);
+
+-- Each featured paper gets one immutable outcome (including failures/skips).
+-- A pre-request interrupted state prevents duplicate paid calls on resumption.
+CREATE TABLE IF NOT EXISTS digest_summaries (
+  announcement_date TEXT NOT NULL,
+  categories_json TEXT NOT NULL,
+  arxiv_id TEXT NOT NULL,
+  result_json TEXT NOT NULL,
+  PRIMARY KEY (announcement_date, categories_json, arxiv_id)
+);
+
+-- Reuse successful scientific summaries across digests with identical inputs.
+CREATE TABLE IF NOT EXISTS summary_cache (
+  cache_key TEXT PRIMARY KEY,
+  result_json TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS rankings (
   announcement_date TEXT NOT NULL,
   categories_json TEXT NOT NULL,

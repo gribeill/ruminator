@@ -1,8 +1,9 @@
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
+import { loadEnvFile } from 'node:process';
 import { dirname, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { categoriesFrom } from './arxiv.ts';
-import { openAppDatabase, openPaperDatabase } from './store.ts';
+import { clearSummaries, openAppDatabase, openPaperDatabase } from './store.ts';
 import { loadDailyDigest, loadSavedDigest } from './load.ts';
 import { createDigestServer } from './server.ts';
 import { createBgeProvider } from './bge.ts';
@@ -10,15 +11,20 @@ import { loadProfiles } from './profiles.ts';
 import { scoreDigest } from './scoring.ts';
 import { loadConfig } from './config.ts';
 import { retrieveFeaturedText } from './fulltext.ts';
+import { summarizeFeatured } from './summaries.ts';
+import { createCloudflareSummaryProvider } from './cloudflare.ts';
 
 const usage = `ruminator — a local arXiv browser
 
-Usage: npm run <start|fetch|serve|score|text> -- [options]
+Usage: npm run <start|fetch|serve|score|text|summarize> -- [options]
   start                  Use today's cached download, or download, then serve
   fetch                  Use today's cached download, or download, and save only
   serve                  Serve saved data without network access or inference
   score                  Score the latest saved digest (never contacts arXiv)
   text                   Cache HTML text for saved featured papers only
+  summarize              Summarize featured cached text (paid calls; no retries)
+  -v, --verbose          Print full model responses (summarize only)
+  --clear                Delete ALL summary state and exit; no API calls (summarize only)
   --categories quant-ph  Comma-separated arXiv categories
   --app-db data/app.sqlite       Disposable application state
   --papers-db data/papers.sqlite Downloaded paper information and source metadata
@@ -44,11 +50,15 @@ async function main(): Promise<void> {
       profiles: { type: 'string', default: 'interests.md' },
       config: { type: 'string', default: 'config.toml' },
       help: { type: 'boolean', short: 'h' },
+      verbose: { type: 'boolean', short: 'v', default: false },
+      clear: { type: 'boolean', default: false },
     },
   });
   if (values.help) { console.log(usage); return; }
   const command = positionals[0];
-  if (positionals.length !== 1 || !['start', 'fetch', 'serve', 'score', 'text'].includes(command)) throw new Error(usage);
+  if (positionals.length !== 1 || !['start', 'fetch', 'serve', 'score', 'text', 'summarize'].includes(command)) throw new Error(usage);
+  if (values.verbose && command !== 'summarize') throw new Error('--verbose requires summarize');
+  if (values.clear && command !== 'summarize') throw new Error('--clear requires summarize');
   if (values['retry-unavailable'] && (command !== 'text' || values.offline)) {
     throw new Error('--retry-unavailable requires text without --offline');
   }
@@ -63,6 +73,14 @@ async function main(): Promise<void> {
   const papersPath = values['papers-db'];
   if (resolve(appPath) === resolve(papersPath)) throw new Error('Application and paper databases must be separate files');
   mkdirSync(dirname(appPath), { recursive: true });
+  // Explicit clear-only branch: no digest lookup, source DB, credentials, or API.
+  if (values.clear) {
+    const appDb = openAppDatabase(appPath);
+    try { clearSummaries(appDb); } finally { appDb.close(); }
+    console.log('Cleared all summary outcomes, cache entries, and run budgets. No API calls made.');
+    console.log('Regenerating summaries requires a separate summarize command and may incur new charges.');
+    return;
+  }
   mkdirSync(dirname(papersPath), { recursive: true });
   const papersDb = openPaperDatabase(papersPath);
   const appDb = openAppDatabase(appPath);
@@ -84,11 +102,20 @@ async function main(): Promise<void> {
     if (command === 'text') {
       await retrieveFeaturedText(papersDb, digest, { offline: values.offline, retryUnavailable: values['retry-unavailable'] });
     }
+    if (command === 'summarize') {
+      if (values.offline) {
+        console.log('Offline: using saved summaries; no requests or new outcomes recorded.');
+      } else {
+        if (existsSync('.env')) loadEnvFile('.env');
+        digest = await summarizeFeatured(appDb, papersDb, digest, config,
+          saved => createCloudflareSummaryProvider(saved, { verbose: values.verbose }));
+      }
+    }
   } finally {
     appDb.close();
     papersDb.close();
   }
-  if (command === 'fetch' || command === 'score' || command === 'text') return;
+  if (['fetch', 'score', 'text', 'summarize'].includes(command)) return;
   const server = createDigestServer(digest!);
   server.on('error', error => { console.error(error.message); process.exitCode = 1; });
   server.listen(port, '127.0.0.1', () => console.log(`Browse http://127.0.0.1:${port} (announcement ${digest!.date})`));

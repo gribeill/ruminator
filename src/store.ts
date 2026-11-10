@@ -5,6 +5,7 @@ import { createDigest, type Digest } from './digest.ts';
 import type { SemanticScores } from './scoring.ts';
 import type { Ranking } from './ranking.ts';
 import type { CachedPaperText } from './fulltext.ts';
+import type { PaperSummary, SummaryConfig } from './summaries.ts';
 
 function openDatabase(path: string, schema: 'app' | 'papers'): DatabaseSync {
   const db = new DatabaseSync(path);
@@ -39,6 +40,87 @@ export function savePaperText(db: DatabaseSync, record: CachedPaperText): void {
     .run(record.result.paperId, record.result.version, record.html, JSON.stringify(record.result));
 }
 
+/** Destructive opt-in reset for the CLI only; normal generation never calls this. */
+export function clearSummaries(db: DatabaseSync): void {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.exec('DELETE FROM digest_summaries; DELETE FROM summary_cache; DELETE FROM summary_runs;');
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+export interface SummaryRun {
+  config: SummaryConfig;
+  usedInputTokens: number;
+  budgetExhausted: boolean;
+}
+
+function digestKey(digest: Digest): [string, string] {
+  return [digest.date, JSON.stringify([...digest.categories].sort())];
+}
+
+function readSummaryRun(db: DatabaseSync, digest: Digest): SummaryRun {
+  const row = db.prepare('SELECT * FROM summary_runs WHERE announcement_date = ? AND categories_json = ?')
+    .get(...digestKey(digest)) as { config_json: string; used_input_tokens: number; budget_exhausted: number };
+  return { config: JSON.parse(row.config_json), usedInputTokens: row.used_input_tokens, budgetExhausted: !!row.budget_exhausted };
+}
+
+export function startSummaryRun(db: DatabaseSync, digest: Digest, config: SummaryConfig): SummaryRun {
+  // Explicit fields keep credentials and unrelated configuration out of snapshots.
+  const snapshot = { llm: config.llm, tokenizer: config.tokenizer, summaries: config.summaries };
+  db.prepare(`INSERT INTO summary_runs (announcement_date, categories_json, config_json) VALUES (?, ?, ?)
+    ON CONFLICT DO NOTHING`).run(...digestKey(digest), JSON.stringify(snapshot));
+  return readSummaryRun(db, digest);
+}
+
+export function readSummaries(db: DatabaseSync, digest: Digest): Record<string, PaperSummary> {
+  const rows = db.prepare('SELECT arxiv_id, result_json FROM digest_summaries WHERE announcement_date = ? AND categories_json = ?')
+    .all(...digestKey(digest)) as { arxiv_id: string; result_json: string }[];
+  return Object.fromEntries(rows.map(row => [row.arxiv_id, JSON.parse(row.result_json)]));
+}
+
+export function readSummaryCache(db: DatabaseSync, key: string): PaperSummary | undefined {
+  const row = db.prepare('SELECT result_json FROM summary_cache WHERE cache_key = ?').get(key) as { result_json: string } | undefined;
+  return row ? JSON.parse(row.result_json) : undefined;
+}
+
+/** Claim once and reserve input atomically; resumption never repeats a paid attempt. */
+export function claimSummary(db: DatabaseSync, digest: Digest, result: PaperSummary, inputTokens: number): boolean {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    if (readSummaries(db, digest)[result.paperId]) { db.exec('COMMIT'); return false; }
+    const run = readSummaryRun(db, digest);
+    let claimed = true;
+    if (inputTokens > 0 && (run.budgetExhausted || inputTokens > run.config.summaries.run_input_tokens - run.usedInputTokens)) {
+      result = { ...result, status: 'token_budget', detail: 'Run input allowance exhausted; no retry' };
+      db.prepare('UPDATE summary_runs SET budget_exhausted = 1 WHERE announcement_date = ? AND categories_json = ?')
+        .run(...digestKey(digest));
+      claimed = false;
+    } else if (inputTokens > 0) {
+      db.prepare('UPDATE summary_runs SET used_input_tokens = used_input_tokens + ? WHERE announcement_date = ? AND categories_json = ?')
+        .run(inputTokens, ...digestKey(digest));
+    }
+    db.prepare('INSERT INTO digest_summaries (announcement_date, categories_json, arxiv_id, result_json) VALUES (?, ?, ?, ?)')
+      .run(...digestKey(digest), result.paperId, JSON.stringify(result));
+    db.exec('COMMIT');
+    return claimed;
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
+/** Only the process that claimed a request completes it; readers see its stored outcome. */
+export function completeSummary(db: DatabaseSync, digest: Digest, result: PaperSummary): void {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.prepare('UPDATE digest_summaries SET result_json = ? WHERE announcement_date = ? AND categories_json = ? AND arxiv_id = ?')
+      .run(JSON.stringify(result), ...digestKey(digest), result.paperId);
+    if (result.status === 'available' && result.cacheKey) {
+      db.prepare('INSERT INTO summary_cache (cache_key, result_json) VALUES (?, ?) ON CONFLICT DO NOTHING')
+        .run(result.cacheKey, JSON.stringify(result));
+    }
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+
 interface DigestRow {
   announcement_date: string;
   categories_json: string;
@@ -68,7 +150,9 @@ export function readSemanticScores(db: DatabaseSync, digest: Digest): SemanticSc
 function withScores(db: DatabaseSync, digest: Digest): Digest {
   const semantic = readSemanticScores(db, digest);
   const ranking = readRanking(db, digest);
-  return { ...digest, ...(semantic ? { semantic } : {}), ...(ranking ? { ranking } : {}) };
+  const summaries = readSummaries(db, digest);
+  return { ...digest, ...(semantic ? { semantic } : {}), ...(ranking ? { ranking } : {}),
+    ...(Object.keys(summaries).length ? { summaries } : {}) };
 }
 
 export function saveSemanticScores(db: DatabaseSync, digest: Digest, scores: SemanticScores): SemanticScores {

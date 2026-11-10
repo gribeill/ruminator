@@ -11,11 +11,26 @@ export interface TokenizerConfig {
   request_overhead: number;
 }
 
+export interface SummaryLimits {
+  run_input_tokens: number;
+  paper_input_tokens: number;
+  max_completion_tokens: number;
+  context_tokens: number;
+}
+
+export function validateSummaryLimits(limits: SummaryLimits): void {
+  if (Object.values(limits).some(v => !Number.isSafeInteger(v) || v <= 0) ||
+      limits.context_tokens <= limits.max_completion_tokens) {
+    throw new Error('Summary limits must be positive safe integers with context larger than completion allowance');
+  }
+}
+
 export interface Config {
   llm: { provider: 'cloudflare'; model: string };
   embedding: typeof BGE_CONFIG;
   scoring: { weights: ScoreWeights };
   tokenizer: TokenizerConfig;
+  summaries: SummaryLimits;
 }
 
 export function validateTokenizer(config: TokenizerConfig): void {
@@ -39,7 +54,7 @@ export function parseConfig(text: string): Config {
     for (const key of keys) if (!(key in record)) throw new Error(`Missing configuration key: ${path}.${key}`);
     return record;
   }
-  table(raw, ['llm', 'embedding', 'scoring', 'tokenizer'], 'config');
+  table(raw, ['llm', 'embedding', 'scoring', 'tokenizer', 'summaries'], 'config');
   const llm = table(raw.llm, ['provider', 'model'], 'llm');
   if (llm.provider !== 'cloudflare') throw new Error('Changing LLM provider away from cloudflare is not yet supported');
   if (typeof llm.model !== 'string' || !llm.model.trim()) throw new Error('llm.model must be a nonempty model ID');
@@ -53,7 +68,10 @@ export function parseConfig(text: string): Config {
   const tokenizer = table(raw.tokenizer,
     ['implementation', 'encoding', 'safety_multiplier', 'message_overhead', 'request_overhead'], 'tokenizer') as unknown as TokenizerConfig;
   validateTokenizer(tokenizer);
-  return { llm: { provider: 'cloudflare', model: llm.model }, embedding: { ...BGE_CONFIG }, scoring: { weights: { ...weights } }, tokenizer: { ...tokenizer } };
+  const summaries = table(raw.summaries,
+    ['run_input_tokens', 'paper_input_tokens', 'max_completion_tokens', 'context_tokens'], 'summaries') as unknown as SummaryLimits;
+  validateSummaryLimits(summaries);
+  return { llm: { provider: 'cloudflare', model: llm.model }, embedding: { ...BGE_CONFIG }, scoring: { weights: { ...weights } }, tokenizer: { ...tokenizer }, summaries: { ...summaries } };
 }
 
 export function loadConfig(path = 'config.toml'): Config {

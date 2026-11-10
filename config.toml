@@ -3,7 +3,7 @@
 
 [llm]
 # Changing the provider away from cloudflare is not yet supported.
-# These settings document the future summary service; no LLM calls are wired yet.
+# Only the explicit `npm run summarize` command makes paid requests.
 provider = "cloudflare"
 model = "openai/gpt-6-luna"
 # Account ID, gateway ID, and API token come from CLOUDFLARE_* environment variables.
@@ -33,4 +33,14 @@ encoding = "o200k_base"
 safety_multiplier = 1.20
 message_overhead = 32
 request_overhead = 64
-# Budget enforcement and output reservations will be added with summarization.
+
+[summaries]
+# Estimated INPUT tokens; cached summaries consume no request budget.
+run_input_tokens = 250000
+paper_input_tokens = 100000
+# Includes visible output and reasoning tokens for the initial OpenAI model.
+max_completion_tokens = 2048
+# Explicit context allowance, including reserved completion tokens.
+# This is our application limit, not a claim about every model's context window.
+context_tokens = 102048
+# No retries: failures and budget skips stay fixed for this digest.

@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit",
     "score": "node src/cli.ts score",
     "text": "node src/cli.ts text",
+    "summarize": "node src/cli.ts summarize",
     "test:model": "node --test test/model.integration.ts"
   },
   "dependencies": {

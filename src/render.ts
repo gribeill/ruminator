@@ -2,6 +2,7 @@ import { pdfUrl, type Paper } from './arxiv.ts';
 import type { Digest } from './digest.ts';
 import { escapeHtml as escape, renderMathText } from './math.ts';
 import { compactAuthors, displayName } from './authors.ts';
+import { summaryUnavailableLabel } from './summaries.ts';
 
 // Keep the cow as literal text, then escape it like any other HTML content.
 const cow = String.raw`            ^__^
@@ -12,6 +13,15 @@ const cow = String.raw`            ^__^
 
 function abstract(paper: Paper): string {
   return `<p class="abstract">${renderMathText(paper.abstract)}</p><p><a href="${escape(pdfUrl(paper))}">PDF</a> · <a href="https://arxiv.org/abs/${escape(paper.id)}v${paper.version}">arXiv:${escape(paper.id)}</a></p>`;
+}
+
+function summary(paper: Paper, digest: Digest): string {
+  const result = digest.summaries?.[paper.id];
+  if (result?.status === 'available') {
+    return `<div class="paper-summary"><p class="text-label">AI summary</p><p>${renderMathText(result.summary!)}</p></div>`;
+  }
+  const reason = result ? summaryUnavailableLabel(result.status) : 'not generated';
+  return `<p class="summary-unavailable">Summary unavailable: ${escape(reason)}</p>`;
 }
 
 function scoreLabel(paper: Paper, digest: Digest): string {
@@ -57,6 +67,9 @@ h3 { font-size: 1.1rem; }
 .cow { margin: 0 0 0 auto; font: 12px/1.2 monospace; white-space: pre; }
 article { margin: 2rem 0; }
 .abstract { white-space: pre-wrap; }
+.paper-summary { border-left: 2px solid #ddd; padding-left: 1rem; }
+.text-label, .summary-unavailable { font-size: 0.85rem; color: #555; }
+.text-label { font-weight: 600; margin-bottom: 0; }
 .katex { white-space: normal; }
 .katex-display { overflow-x: auto; overflow-y: hidden; }
 summary { cursor: pointer; }
@@ -75,7 +88,7 @@ a { color: #174b92; }
 <main>
 <section><h2>${digest.ranking ? 'Featured papers' : 'Random picks'}</h2>
 <p>${digest.ranking ? 'Four relevant picks, one adjacent topic, and one gently relevance-weighted wildcard, when enough papers are available.' : 'Temporary random selection; run scoring to generate recommendations.'}</p>
-${featured.map(p => `<article><h3>${renderMathText(p.title)} ${scoreLabel(p, digest)} ${selectionLabel(p.id, digest)}</h3>${authors(p)}${abstract(p)}</article>`).join('\n')}
+${featured.map(p => `<article><h3>${renderMathText(p.title)} ${scoreLabel(p, digest)} ${selectionLabel(p.id, digest)}</h3>${authors(p)}${summary(p, digest)}<p class="text-label">Abstract</p>${abstract(p)}</article>`).join('\n')}
 ${digest.papers.length === 0 ? '<p>No new papers in this announcement batch.</p>' : ''}
 </section>
 <section><h2>Other postings (${rest.length})</h2>

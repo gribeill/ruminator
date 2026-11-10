@@ -8,7 +8,7 @@ export interface TextMessage {
 
 /** Count all text without truncation; framing/headroom are estimates, not model guarantees.
  * Callers must supply the complete prompt, including instructions and paper text.
- * Output/reasoning reservations and run-budget enforcement belong to the future request loop.
+ * Output/reasoning reservations and run-budget enforcement belong to the summary request loop.
  */
 export function estimatePromptTokens(messages: readonly TextMessage[], config: TokenizerConfig): {
   textTokens: number;

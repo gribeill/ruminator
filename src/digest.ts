@@ -1,6 +1,7 @@
 import type { Batch, Paper } from './arxiv.ts';
 import type { SemanticScores } from './scoring.ts';
 import type { Ranking } from './ranking.ts';
+import type { PaperSummary } from './summaries.ts';
 
 export interface Digest {
   date: string;
@@ -9,6 +10,7 @@ export interface Digest {
   featuredIds: string[];
   semantic?: SemanticScores;
   ranking?: Ranking;
+  summaries?: Record<string, PaperSummary>;
 }
 
 /** Separate named seeds keep daily discovery stable across page refreshes. */

@@ -39,6 +39,10 @@ test('configuration rejects typos, unsupported backends, and invalid numeric set
     ['model = "openai/gpt-6-luna"', 'model = ""', /model/],
     ['semantic = 0.60', 'semantics = 0.60', /Unknown configuration/],
     ['semantic = 0.60', '', /Missing configuration/],
+    ['run_input_tokens = 250000', 'run_input_tokens = 0', /Summary limits/],
+    ['paper_input_tokens = 100000', 'paper_input_tokens = 1.5', /Summary limits/],
+    ['max_completion_tokens = 2048', 'max_completion_tokens = -1', /Summary limits/],
+    ['context_tokens = 102048', 'context_tokens = 2048', /Summary limits/],
   ] as const) assert.throws(() => parseConfig(text.replace(from, to)), error);
   assert.throws(() => parseConfig('broken = ['));
 });
