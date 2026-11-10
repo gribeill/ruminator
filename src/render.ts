@@ -1,3 +1,19 @@
+/**
+ * Copyright 2026 Guilhem Ribeill
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import { pdfUrl, type Paper } from './arxiv.ts';
 import type { Digest } from './digest.ts';
 import { escapeHtml as escape, renderMathText } from './math.ts';
@@ -10,11 +26,11 @@ export interface VotingView {
   csrfToken: string;
 }
 
-function voteControls(paper: Paper, voting?: VotingView): string {
+function voteControls(id: string, voting?: VotingView): string {
   if (!voting) return '';
-  const current = voting.votes[paper.id] ?? 0;
+  const current = voting.votes[id] ?? 0;
   return `<form class="vote-controls" method="post" action="/vote">
-<input type="hidden" name="paper" value="${escape(paper.id)}">
+<input type="hidden" name="paper" value="${escape(id)}">
 <input type="hidden" name="token" value="${escape(voting.csrfToken)}">
 <button type="submit" name="value" value="${current === 1 ? 0 : 1}" aria-pressed="${current === 1}" aria-label="${current === 1 ? 'Clear upvote' : 'More relevant'}" title="${current === 1 ? 'Clear upvote' : 'More relevant to my interests'}">+</button>
 <button type="submit" name="value" value="${current === -1 ? 0 : -1}" aria-pressed="${current === -1}" aria-label="${current === -1 ? 'Clear downvote' : 'Less relevant'}" title="${current === -1 ? 'Clear downvote' : 'Less relevant to my interests'}">−</button>
@@ -34,8 +50,8 @@ function abstract(paper: Paper, collapsible = false): string {
 }
 
 // Keep actions outside both featured disclosures, but inside remaining-paper dropdowns.
-function paperActions(paper: Paper, voting?: VotingView): string {
-  return `<div class="paper-actions"><span><a href="${escape(pdfUrl(paper))}">PDF</a> | <a href="https://arxiv.org/abs/${escape(paper.id)}v${paper.version}">arXiv:${escape(paper.id)}</a></span>${voteControls(paper, voting)}</div>`;
+function paperLinks(paper: Paper): string {
+  return `<div class="paper-actions"><span><a href="${escape(pdfUrl(paper))}">PDF</a> | <a href="https://arxiv.org/abs/${escape(paper.id)}v${paper.version}">arXiv:${escape(paper.id)}</a></span>`;
 }
 
 function summary(paper: Paper, digest: Digest): string {
@@ -64,14 +80,33 @@ function selectionLabel(id: string, digest: Digest): string {
   return role ? `<small class="selection">${{ relevant: 'Selected', adjacent: 'Adjacent', wildcard: 'Wildcard' }[role]}</small>` : '';
 }
 
-/** Render only stored data; opening the page never generates a new selection. */
-export function renderDigest(digest: Digest, voting?: VotingView): string {
+/** Pre-render scientific content; only the small form is dynamic. No placeholder
+ * replacement is used, so paper text cannot accidentally become a template slot.
+ */
+function preparePaper(paper: Paper, digest: Digest, featured: boolean): (voting?: VotingView) => string {
+  const id = paper.id;
+  const title = `${renderMathText(paper.title)} ${score(id, digest)}`;
+  const beforeVotes = featured
+    ? `<article id="${escape(paperAnchor(id))}"><h3>${title} ${selectionLabel(id, digest)}</h3>${authors(paper)}${abstract(paper, true)}${summary(paper, digest)}${paperLinks(paper)}`
+    : `<div class="posting" id="${escape(paperAnchor(id))}"><details><summary>${title}${authors(paper)}</summary>${abstract(paper)}${paperLinks(paper)}`;
+  const afterVotes = featured ? '</div></article>' : '</div></details></div>';
+  return voting => beforeVotes + voteControls(id, voting) + afterVotes;
+}
+
+/** Compile one publication into static HTML fragments, including all KaTeX output.
+ * Reuse the returned renderer across requests; votes and CSRF tokens remain live.
+ */
+export function createDigestRenderer(digest: Digest): (voting?: VotingView) => string {
   const byId = new Map(digest.papers.map(p => [p.id, p]));
   const featuredIds = digest.ranking?.featured.map(p => p.id) ?? digest.featuredIds;
   const featured = featuredIds.map(id => byId.get(id)!);
   const selected = new Set(featuredIds);
   const rest = digest.ranking ? digest.ranking.remainingIds.map(id => byId.get(id)!) : digest.papers.filter(p => !selected.has(p.id));
-  return `<!doctype html>
+  const featuredViews = featured.map(p => preparePaper(p, digest, true));
+  const remainingViews = rest.map(p => preparePaper(p, digest, false));
+  const featuredHeading = digest.ranking ? 'Featured papers' : 'Random picks';
+  const empty = digest.papers.length === 0;
+  const header = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -115,17 +150,23 @@ details { margin: 1rem 0; }
 <header><div class="brand"><h1>ruminator</h1>
 <pre class="cow" aria-hidden="true">${escape(cow)}</pre></div>
 <p>${escape(digest.categories.join(', '))} · Announcement: <time datetime="${escape(digest.date)}">${escape(digest.date)}</time> · ${digest.papers.length} papers</p>
-${voting ? '<p>+ / − mean more/less relevant to your interests, not scientific quality. Votes affect future recommendations; this digest stays fixed.</p>' : ''}
+`;
+  return voting => `${header}${voting ? '<p>+ / − mean more/less relevant to your interests, not scientific quality. Votes affect future recommendations; this digest stays fixed.</p>' : ''}
 </header>
 <main>
-<section><h2>${digest.ranking ? 'Featured papers' : 'Random picks'}</h2>
-${featured.map(p => `<article id="${escape(paperAnchor(p.id))}"><h3>${renderMathText(p.title)} ${score(p.id, digest)} ${selectionLabel(p.id, digest)}</h3>${authors(p)}${abstract(p, true)}${summary(p, digest)}${paperActions(p, voting)}</article>`).join('\n')}
-${digest.papers.length === 0 ? '<p>No new papers in this announcement batch.</p>' : ''}
+<section><h2>${featuredHeading}</h2>
+${featuredViews.map(render => render(voting)).join('\n')}
+${empty ? '<p>No new papers in this announcement batch.</p>' : ''}
 </section>
-<section><h2>Other postings (${rest.length})</h2>
-${rest.map(p => `<div class="posting" id="${escape(paperAnchor(p.id))}"><details><summary>${renderMathText(p.title)} ${score(p.id, digest)}${authors(p)}</summary>${abstract(p)}${paperActions(p, voting)}</details></div>`).join('\n')}
+<section><h2>Other postings (${remainingViews.length})</h2>
+${remainingViews.map(render => render(voting)).join('\n')}
 </section>
 </main>
 </body>
 </html>`;
+}
+
+/** One-shot rendering for exports/tests; servers keep a compiled renderer instead. */
+export function renderDigest(digest: Digest, voting?: VotingView): string {
+  return createDigestRenderer(digest)(voting);
 }

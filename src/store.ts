@@ -1,5 +1,22 @@
+/**
+ * Copyright 2026 Guilhem Ribeill
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { Batch, Paper } from './arxiv.ts';
 import type { FeedbackConfig, FeedbackInput, VotedPaper, Votes, VoteValue } from './feedback.ts';
 import { createDigest, type Digest } from './digest.ts';
@@ -11,6 +28,9 @@ import type { PaperSummary, SummaryConfig } from './summaries.ts';
 function openDatabase(path: string, schema: 'app' | 'papers'): DatabaseSync {
   const db = new DatabaseSync(path);
   try {
+    // The reader's votes and generation use separate connections/processes.
+    // Brief write contention should wait rather than discard a vote or result.
+    db.exec('PRAGMA busy_timeout = 1000');
     // Initialize the current schema only. Development databases are not upgraded.
     db.exec(readFileSync(new URL(`../schema/${schema}.sql`, import.meta.url), 'utf8'));
     return db;
@@ -62,9 +82,12 @@ export function saveVote(db: DatabaseSync, paper: Paper, value: VoteValue): void
   } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 
-/** Freeze feedback once, before inference: votes arriving mid-run belong to later digests. */
+/** Freeze feedback once, joining the generation-input transaction when present.
+ * Standalone scoring still gets an atomic snapshot; mid-run votes belong to later digests.
+ */
 export function captureFeedback(db: DatabaseSync, digest: Digest, config: FeedbackConfig): FeedbackInput {
-  db.exec('BEGIN IMMEDIATE');
+  const ownTransaction = !db.isTransaction;
+  if (ownTransaction) db.exec('BEGIN IMMEDIATE');
   try {
     const previous = db.prepare('SELECT snapshot_json FROM feedback_snapshots WHERE announcement_date = ? AND categories_json = ?')
       .get(...digestKey(digest)) as { snapshot_json: string } | undefined;
@@ -78,9 +101,12 @@ export function captureFeedback(db: DatabaseSync, digest: Digest, config: Feedba
       db.prepare('INSERT INTO feedback_snapshots (announcement_date, categories_json, snapshot_json) VALUES (?, ?, ?)')
         .run(...digestKey(digest), JSON.stringify(snapshot));
     }
-    db.exec('COMMIT');
+    if (ownTransaction) db.exec('COMMIT');
     return snapshot;
-  } catch (error) { db.exec('ROLLBACK'); throw error; }
+  } catch (error) {
+    if (ownTransaction) db.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 /** Paper-version HTML/text caches survive application DB resets. */
@@ -175,18 +201,31 @@ export function claimSummary(db: DatabaseSync, digest: Digest, result: PaperSumm
   } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 
-/** Only the process that claimed a request completes it; readers see its stored outcome. */
-export function completeSummary(db: DatabaseSync, digest: Digest, result: PaperSummary): void {
-  db.exec('BEGIN IMMEDIATE');
-  try {
-    db.prepare('UPDATE digest_summaries SET result_json = ? WHERE announcement_date = ? AND categories_json = ? AND arxiv_id = ?')
-      .run(JSON.stringify(result), ...digestKey(digest), result.paperId);
-    if (result.status === 'available' && result.cacheKey) {
-      db.prepare('INSERT INTO summary_cache (cache_key, result_json) VALUES (?, ?) ON CONFLICT DO NOTHING')
-        .run(result.cacheKey, JSON.stringify(result));
+/** Retry only local persistence after contention, never the already-completed provider call.
+ * Five attempts, each with the connection's bounded lock wait, keep the response in
+ * memory while votes finish. Other DB errors fail immediately; claims stay durable.
+ */
+export async function completeSummary(db: DatabaseSync, digest: Digest, result: PaperSummary): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        db.prepare('UPDATE digest_summaries SET result_json = ? WHERE announcement_date = ? AND categories_json = ? AND arxiv_id = ?')
+          .run(JSON.stringify(result), ...digestKey(digest), result.paperId);
+        if (result.status === 'available' && result.cacheKey) {
+          db.prepare('INSERT INTO summary_cache (cache_key, result_json) VALUES (?, ?) ON CONFLICT DO NOTHING')
+            .run(result.cacheKey, JSON.stringify(result));
+        }
+        db.exec('COMMIT');
+        return;
+      } catch (error) { db.exec('ROLLBACK'); throw error; }
+    } catch (error) {
+      // SQLite extended result codes keep the primary code in the low byte.
+      const code = (error as { errcode?: number }).errcode;
+      if (typeof code !== 'number' || ![5, 6].includes(code & 255) || attempt === 4) throw error;
+      await delay(100 * (attempt + 1));
     }
-    db.exec('COMMIT');
-  } catch (error) { db.exec('ROLLBACK'); throw error; }
+  }
 }
 
 interface DigestRow {
@@ -274,8 +313,12 @@ export function cachedDownload(db: DatabaseSync, category: string): Download | u
 
 /** Keep the current source snapshot per category and update freshness atomically. */
 export function saveDownload(db: DatabaseSync, { batch, checkedAt }: Download): void {
-  db.exec('BEGIN');
+  db.exec('BEGIN IMMEDIATE');
   try {
+    const previous = cachedDownload(db, batch.category);
+    if (previous && batch.date < previous.batch.date) {
+      throw new Error(`arXiv ${batch.category} returned an older batch (${batch.date} < ${previous.batch.date}); refusing to go back in time`);
+    }
     db.prepare('DELETE FROM batches WHERE category = ? AND announcement_date != ?').run(batch.category, batch.date);
     db.prepare(`INSERT INTO batches (category, announcement_date, source_url, papers_json, fetched_at)
       VALUES (?, ?, ?, ?, ?) ON CONFLICT (category, announcement_date) DO NOTHING`)

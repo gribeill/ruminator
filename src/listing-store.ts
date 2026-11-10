@@ -1,3 +1,19 @@
+/**
+ * Copyright 2026 Guilhem Ribeill
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import { createHash, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Config } from './config.ts';
@@ -55,16 +71,18 @@ export function selectWorkingListing(db: DatabaseSync, digest: Digest, clear = f
 
 /** Freeze ranking inputs before any model initialization; summary settings remain explicit per invocation. */
 export function freezeGenerationInputs(db: DatabaseSync, inputs: GenerationInputs): GenerationInputs {
-  const working = readWorkingListing(db);
-  if (!working) throw new Error('No working listing; run fetch or generate first');
-  if (working.inputs) return working.inputs;
   db.exec('BEGIN IMMEDIATE');
   try {
-    db.prepare('UPDATE working_listing SET inputs_json = ? WHERE singleton = 1').run(JSON.stringify(inputs));
+    const working = readWorkingListing(db);
+    if (!working) throw new Error('No working listing; run fetch or generate first');
+    const frozen = working.inputs ?? inputs;
+    if (!working.inputs) db.prepare('UPDATE working_listing SET inputs_json = ? WHERE singleton = 1').run(JSON.stringify(frozen));
+    // captureFeedback joins this transaction: a crash cannot pair old profiles
+    // and configuration with votes captured on a later invocation.
+    captureFeedback(db, working.digest, frozen.config.feedback);
     db.exec('COMMIT');
+    return frozen;
   } catch (error) { db.exec('ROLLBACK'); throw error; }
-  captureFeedback(db, working.digest, inputs.config.feedback);
-  return inputs;
 }
 
 /** One transaction switches readers to the complete artifact. Cleanup happens afterward. */
@@ -91,7 +109,7 @@ export function pruneVotes(db: DatabaseSync, now = new Date()): void {
 /** Retain only current/staging inputs and active voted examples, not a shadow literature archive.
  * Separate transactions make cleanup restartable if a process dies after publication.
  */
-export function pruneListingData(app: DatabaseSync, papers: DatabaseSync, now = new Date()): void {
+export function pruneListingData(app: DatabaseSync, papers: DatabaseSync, now = new Date(), downloadCategories: readonly string[] = []): void {
   pruneVotes(app, now);
   const cutoff = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000).toISOString();
   // Expired example metadata must not survive inside JSON provenance either.
@@ -154,20 +172,29 @@ export function pruneListingData(app: DatabaseSync, papers: DatabaseSync, now = 
   } catch (error) { app.exec('ROLLBACK'); throw error; }
 
   const ids = new Set(digests.flatMap(d => d.papers.map(p => `${p.id}v${p.version}`)));
-  const categories = new Set(digests.flatMap(d => d.categories));
+  // Failed/mixed-date downloads are useful for retry, but only their latest source
+  // metadata survives. Full text still belongs solely to current/working papers.
+  const authorIds = new Set(ids);
+  const categories = new Set([...digests.flatMap(d => d.categories), ...downloadCategories]);
   const batches = new Set(digests.flatMap(d => d.categories.map(c => `${c}:${d.date}`)));
   papers.exec('BEGIN IMMEDIATE');
   try {
     for (const row of papers.prepare('SELECT category, batch_json FROM feed_downloads').all()) {
       if (!categories.has(row.category as string)) papers.prepare('DELETE FROM feed_downloads WHERE category = ?').run(row.category);
-      else batches.add(`${row.category}:${JSON.parse(row.batch_json as string).date}`);
+      else {
+        const batch = JSON.parse(row.batch_json as string);
+        batches.add(`${row.category}:${batch.date}`);
+        for (const paper of batch.papers) authorIds.add(`${paper.id}v${paper.version}`);
+      }
     }
-    for (const row of papers.prepare('SELECT category, announcement_date FROM batches').all()) {
+    for (const row of papers.prepare('SELECT category, announcement_date, papers_json FROM batches').all()) {
       if (!batches.has(`${row.category}:${row.announcement_date}`)) papers.prepare('DELETE FROM batches WHERE category = ? AND announcement_date = ?').run(row.category, row.announcement_date);
+      else for (const paper of JSON.parse(row.papers_json as string)) authorIds.add(`${paper.id}v${paper.version}`);
     }
     for (const table of ['paper_texts', 'paper_authors']) {
       for (const row of papers.prepare(`SELECT arxiv_id, version FROM ${table}`).all()) {
-        if (!ids.has(`${row.arxiv_id}v${row.version}`)) papers.prepare(`DELETE FROM ${table} WHERE arxiv_id = ? AND version = ?`).run(row.arxiv_id, row.version);
+        const retained = table === 'paper_texts' ? ids : authorIds;
+        if (!retained.has(`${row.arxiv_id}v${row.version}`)) papers.prepare(`DELETE FROM ${table} WHERE arxiv_id = ? AND version = ?`).run(row.arxiv_id, row.version);
       }
     }
     papers.exec('COMMIT');

@@ -58,7 +58,7 @@ npm run generate -- --offline --clear
 npm run serve -- --port 3001
 ```
 
-Category feeds are cached once per US Eastern calendar day. `--refresh` checks them again; it is not permission to replace an existing ranking. All requested categories must report the same announcement date. Mismatched dates or failed downloads leave the publication unchanged; successful category downloads remain cached for another attempt. Generation refuses a batch older than the current publication.
+Category feeds are cached once per US Eastern calendar day. `--refresh` checks them again; it is not permission to replace an existing ranking. All requested categories must report the same announcement date. Mismatched dates or failed downloads leave the publication unchanged; successful category downloads remain cached for another attempt. Generation refuses a batch older than the current publication. A category feed that regresses behind its cached date is rejected before changing source data or freshness, preserving offline regeneration.
 
 There is one listing across **all** category combinations: generating a different combination replaces it. `serve` always displays the global current publication. The lower-level commands below act on the single working listing, not a historical category-specific digest.
 
@@ -77,13 +77,15 @@ npm run summarize                     # Explicit paid summaries, then publish
 npm run summarize -- -v               # Full responses for actual requests; credentials redacted
 ```
 
+If a different batch is already staged, `fetch` of the published batch fails explicitly rather than claiming to switch staging. Use `serve` to read the publication, continue the named working batch, or use `generate --clear --categories ...` to rebuild the requested batch deliberately. A successful `fetch` reports the actual working date and categories.
+
 `text` does not publish or change ranking. `score` publishes the working ranking; `summarize` publishes after recording its outcomes. These commands also let you add summaries explicitly after an unsummarized publication; `generate --summarize` alone remains a no-op for that published batch.
 
 `summarize --tokens` includes all featured papers, even those with cached summaries. It flags missing HTML/partial totals and never loads credentials, calls APIs, or changes budgets/outcomes. `summarize --offline` also leaves summary state untouched.
 
 The narrower `summarize --clear` command still clears only summary state and exits without API calls or source-database access. If the working listing is published, its summary display is cleared too. Regeneration requires a separate command and may incur charges. Use `generate --clear` for a full listing reset instead.
 
-Only one writing generation/development command may run at a time for an app database. A local process lock prevents overlapping clears and paid calls; an interrupted process's lock can be reclaimed when its process is no longer alive. The reading server can stay running. Old browser vote forms are rejected after publication replacement: reload the current page before voting.
+Only one writing generation/development command may run at a time for an app database. A local process lock prevents overlapping clears and paid calls; an interrupted process's lock can be reclaimed when its process is no longer alive. The reading server can stay running. SQLite connections wait up to one second for brief lock contention. Saving a completed summary gets up to five persistence attempts with short pauses; this never repeats the provider call or its budget reservation. Persistent storage errors still stop the command conservatively. Old browser vote forms are rejected after publication replacement: reload the current page before voting.
 
 ## Ephemeral storage and retention
 
@@ -91,9 +93,9 @@ Only one writing generation/development command may run at a time for an app dat
 - **`data/papers.sqlite`**: current per-category feed caches, working/current paper metadata, and current/working full-text caches. This is a working cache, not an archive.
 - **`data/models/`**: pinned model assets, independent of listing lifecycle.
 
-Override the database paths with `--app-db` and `--papers-db`; they must be different files. Use one app/source pair for normal operation. Separate experiments sharing a source DB should not run concurrently.
+Override the database paths with `--app-db` and `--papers-db`; they must be different files, including symlink/hard-link aliases. Existing parent directories are resolved before either database is created. Use one app/source pair for normal operation. Separate experiments sharing a source DB should not run concurrently.
 
-Publication is an atomic application-database replacement. Source cleanup follows it and is safe to repeat after interruption. Subsequent generation prunes obsolete batches, rankings, text, summaries, budgets, and unused embeddings. Embeddings are retained only for current/working paper and profile inputs, active voted examples, and frozen feedback needed by unfinished ranking. This can reuse vectors without retaining old reading artifacts. Successful summaries are reusable within the retained working state, not a permanent cross-day archive.
+Publication is an atomic application-database replacement. Source cleanup follows it and is safe to repeat after interruption. Each generation attempt prunes obsolete batches, rankings, text, summaries, budgets, and unused embeddings, including when downloads fail or dates disagree. Useful partial downloads and their latest source metadata remain cached for retry; older author metadata does not accumulate. Expired vote metadata/vectors are removed even during network outages. Embeddings are retained only for current/working paper and profile inputs, active voted examples, and frozen feedback needed by unfinished ranking. This can reuse vectors without retaining old reading artifacts. Successful summaries are reusable within the retained working state, not a permanent cross-day archive.
 
 ### Votes expire after 365 days
 
@@ -103,7 +105,7 @@ Manual generation compacts vote changes to the latest active vote per paper and 
 
 There is no background expiry job. With no manual generation, existing disk state remains in place. Current/working paper metadata is retained because it is needed for those listings, independently of vote expiry.
 
-Active voted examples retain title and abstract so they can be embedded again in a future compatible model space. New votes affect subsequent generation, never an existing ranking. Profiles, weights, and active votes are frozen before inference in the manual generation pipeline; interrupted runs resume those inputs. Expired feedback is removed even from a very old interrupted run.
+Active voted examples retain title and abstract so they can be embedded again in a future compatible model space. New votes affect subsequent generation, never an existing ranking. Profiles, configuration (including weights), and active votes are frozen together in one SQLite transaction before inference; interrupted runs resume that complete snapshot, never a mixture of inputs from different invocations. Expired feedback is removed even from a very old interrupted run.
 
 ## Configuration and research interests
 
@@ -162,7 +164,7 @@ These are experimental relevance measures, **not probabilities or scientific-qua
 
 Featured selections avoid identical titles and cosine similarity ≥0.95 when alternatives exist; tiny/redundant batches relax this to fill up to six distinct IDs. Every remaining paper stays available. Constants live in `src/ranking.ts`.
 
-Math is rendered server-side with KaTeX, local styles/fonts, escaped paper text, disabled trust features, and escaped-source fallback. No browser JavaScript or CDN is needed. The standalone 800px reading column loosely follows Hugo's XMin theme, without importing site navigation or remote assets.
+Math is rendered server-side with KaTeX, local styles/fonts, escaped paper text, disabled trust features, and escaped-source fallback. A running server pre-renders paper HTML and math once per publication; subsequent GETs assemble only live vote controls around those static fragments. HEAD requests skip page assembly and vote reads. New or updated publications rebuild the rendered snapshot. No browser JavaScript or CDN is needed. The standalone 800px reading column loosely follows Hugo's XMin theme, without importing site navigation or remote assets.
 
 ## Full text and summaries
 
@@ -170,11 +172,13 @@ Text comes only from versioned `https://arxiv.org/html/{id}v{version}` pages, ne
 
 Extraction keeps scientific prose, equation TeX, captions/tables, and appendices, without executing scripts or fetching assets. It accepts unsectioned articles but requires substantive body content beyond title/author/abstract/bibliography metadata. Information present only in figure images is not recovered.
 
-The summary prompt requests a short factual description grounded in the complete cached text. Formatting validation cannot guarantee factual accuracy: read the paper for scientific conclusions. The page distinguishes missing HTML, API failure, exhausted token budget, and summarization errors.
+The summary prompt requests a short factual description grounded in the complete cached text. It explicitly treats paper titles/full text as untrusted data and instructs the model to ignore embedded instructions or role claims. This is a safeguard, not a guarantee against prompt injection or inaccurate summaries; read the paper for scientific conclusions. Cache identity and provenance include a SHA-256 hash of the exact message roles/content sent to the provider, including system instructions and user-message framing. Prompt edits therefore invalidate reusable results without relying on a manually updated version label; existing published outcomes stay unchanged. The page distinguishes missing HTML, API failure, exhausted token budget, and summarization errors.
 
 Default limits are 250,000 estimated input tokens per run, 100,000 per paper, 2,048 completion tokens, and a 102,048-token application context allowance. Full prompts are counted locally without truncation. Output allowance is reserved separately. These estimates are not a verified tokenizer match for every configured model or hard spending limits.
 
 Each uncached paper gets a separate sequential request. Before a request, SQLite durably claims it and reserves estimated input. **Attempted requests are never automatically retried**, including after interruption; errors do not refund reservations. Missing HTML can become eligible after manual retrieval, since it was not an attempt. Successful current cache entries cost no new budget. Exceeding the remaining run budget latches subsequent uncached papers as skipped. Previously recorded attempts/skips remain fixed until an explicit clear. Current summary configuration applies to still-eligible papers without resetting spent input.
+
+RSS responses are capped at **8 MiB** and Cloudflare summary responses at **1 MiB**, before XML/JSON parsing. Streaming reads enforce these limits on decoded bytes even for chunked/compressed responses without a trustworthy `Content-Length`; oversized bodies are cancelled and rejected, not truncated or printed in verbose logs. HTML retrieval retains its separate 16 MiB cap.
 
 Verbose mode prints full responses only for actual calls, defensively redacting credentials; raw responses are not stored. Logs may still contain paper text. Page requests never retrieve text or invoke a provider.
 

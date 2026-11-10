@@ -1,5 +1,24 @@
+/**
+ * Copyright 2026 Guilhem Ribeill
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import type { SummaryConfig, SummaryProvider, SummaryUsage } from './summaries.ts';
 import { SummaryError } from './summaries.ts';
+import { readResponseText, ResponseTooLargeError } from './http-body.ts';
+
+export const MAX_SUMMARY_RESPONSE_BYTES = 1024 * 1024;
 
 interface CloudflareCredentials {
   accountId?: string;
@@ -47,8 +66,11 @@ export function createCloudflareSummaryProvider(config: SummaryConfig, {
         throw new SummaryError('api_unavailable', 'Cloudflare request failed or timed out');
       }
       let raw: string;
-      try { raw = await response.text(); }
-      catch { throw new SummaryError('api_unavailable', 'Cloudflare response could not be read'); }
+      try { raw = await readResponseText(response, MAX_SUMMARY_RESPONSE_BYTES); }
+      catch (error) {
+        if (error instanceof ResponseTooLargeError) throw new SummaryError('summarization_error', 'Cloudflare response exceeds the 1 MiB size limit');
+        throw new SummaryError('api_unavailable', 'Cloudflare response could not be read');
+      }
       if (verbose) {
         const paper = messages.find(m => m.role === 'user')?.content.split('\n', 1)[0] ?? 'paper';
         // Full response only, never request headers or environment. Redact credentials

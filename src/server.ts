@@ -1,3 +1,19 @@
+/**
+ * Copyright 2026 Guilhem Ribeill
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import { randomBytes } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
@@ -5,7 +21,7 @@ import type { AddressInfo } from 'node:net';
 import type { Paper } from './arxiv.ts';
 import type { Digest } from './digest.ts';
 import { paperAnchor, type Votes, type VoteValue } from './feedback.ts';
-import { renderDigest } from './render.ts';
+import { createDigestRenderer } from './render.ts';
 import type { Publication } from './listing-store.ts';
 
 export interface VoteStore {
@@ -33,6 +49,7 @@ function readForm(request: IncomingMessage): Promise<URLSearchParams> {
 export function createDigestServer(source: Digest | (() => Publication | undefined), votes?: VoteStore): Server {
   let digest: Digest | undefined;
   let html = '', identity = '', csrfToken = '';
+  let renderPage: ReturnType<typeof createDigestRenderer> | undefined;
   let byId = new Map<string, Paper>();
   const refresh = () => {
     const publication = typeof source === 'function' ? source() : { generationId: 'static', digest: source };
@@ -40,7 +57,8 @@ export function createDigestServer(source: Digest | (() => Publication | undefin
     if (next === identity) return;
     identity = next;
     digest = publication?.digest;
-    html = digest ? renderDigest(digest) : '';
+    renderPage = digest ? createDigestRenderer(digest) : undefined;
+    html = renderPage && !votes ? renderPage() : '';
     csrfToken = randomBytes(32).toString('hex');
     byId = new Map(digest?.papers.map(paper => [paper.id, paper]) ?? []);
   };
@@ -112,8 +130,9 @@ export function createDigestServer(source: Digest | (() => Publication | undefin
         'Content-Security-Policy': "default-src 'none'; style-src 'self' 'unsafe-inline'; font-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
         'X-Content-Type-Options': 'nosniff',
       });
-      const page = votes ? renderDigest(digest, { votes: votes.read(), csrfToken }) : html;
-      response.end(request.method === 'HEAD' ? undefined : page);
+      // HEAD needs neither live votes nor page assembly; math is already frozen.
+      response.end(request.method === 'HEAD' ? undefined
+        : votes ? renderPage!({ votes: votes.read(), csrfToken }) : html);
     };
     void handle().catch(() => { if (!response.headersSent) send(500, 'Local request failed'); else response.end(); });
   });

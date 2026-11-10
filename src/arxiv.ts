@@ -1,4 +1,23 @@
+/**
+ * Copyright 2026 Guilhem Ribeill
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
+import { readResponseText } from './http-body.ts';
+
+export const MAX_RSS_BYTES = 8 * 1024 * 1024;
 
 export interface Paper {
   id: string;
@@ -70,13 +89,16 @@ export function parseFeed(xml: string, category: string): Batch {
   return { category, date: batchDate, sourceUrl: feedUrl(category), papers };
 }
 
-export async function fetchBatch(category: string): Promise<Batch> {
-  const response = await fetch(feedUrl(category), {
+export async function fetchBatch(category: string, fetcher: typeof fetch = fetch): Promise<Batch> {
+  const response = await fetcher(feedUrl(category), {
     headers: { 'User-Agent': 'ruminator/0.1 (local literature browser)' },
     signal: AbortSignal.timeout(30_000),
   });
-  if (!response.ok) throw new Error(`arXiv ${category}: HTTP ${response.status}`);
-  return parseFeed(await response.text(), category);
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {});
+    throw new Error(`arXiv ${category}: HTTP ${response.status}`);
+  }
+  return parseFeed(await readResponseText(response, MAX_RSS_BYTES), category);
 }
 
 export function pdfUrl(paper: Paper): string {

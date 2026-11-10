@@ -1,10 +1,27 @@
-import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs';
+/**
+ * Copyright 2026 Guilhem Ribeill
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import { existsSync, mkdirSync } from 'node:fs';
 import { loadEnvFile } from 'node:process';
-import { dirname, resolve } from 'node:path';
+import { dirname } from 'node:path';
 import { parseArgs } from 'node:util';
 import { categoriesFrom } from './arxiv.ts';
+import { assertSeparateDatabasePaths } from './database-paths.ts';
 import { clearSummaries, openAppDatabase, openPaperDatabase, readVotes, saveVote } from './store.ts';
-import { acquireGenerationLock, freezeGenerationInputs, pruneListingData, publishListing, readPublication, readWorkingListing } from './listing-store.ts';
+import { acquireGenerationLock, freezeGenerationInputs, pruneListingData, publishListing, readPublication, readWorkingListing, sameBatch } from './listing-store.ts';
 import { generateListing, prepareListing } from './generate.ts';
 import { createDigestServer } from './server.ts';
 import { createBgeProvider } from './bge.ts';
@@ -76,10 +93,7 @@ async function main(): Promise<void> {
   const port = Number(values.port);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Port must be between 1 and 65535');
   const appPath = values['app-db'], papersPath = values['papers-db'];
-  const sameFile = existsSync(appPath) && existsSync(papersPath) &&
-    (realpathSync(appPath) === realpathSync(papersPath) ||
-      (statSync(appPath).dev === statSync(papersPath).dev && statSync(appPath).ino === statSync(papersPath).ino));
-  if (resolve(appPath) === resolve(papersPath) || sameFile) throw new Error('Application and paper databases must be separate files');
+  assertSeparateDatabasePaths(appPath, papersPath);
   mkdirSync(dirname(appPath), { recursive: true });
   const app = openAppDatabase(appPath);
   let release: (() => void) | undefined;
@@ -108,7 +122,12 @@ async function main(): Promise<void> {
             summarize: values.summarize, createSummaryProvider: provider });
         } else if (command === 'fetch') {
           const result = await prepareListing(app, papers, options);
-          console.log(`Working batch ${result.digest.date}: ${result.digest.papers.length} papers.`);
+          const working = readWorkingListing(app);
+          if (!working || !sameBatch(working.digest, result.digest)) {
+            const staged = working ? `${working.digest.date} (${working.digest.categories.join(', ')})` : 'none';
+            throw new Error(`Requested batch ${result.digest.date} (${result.digest.categories.join(', ')}) is already published, but the working batch is ${staged}. Staging was not changed. Use serve to read it, or generate --clear with the requested --categories to rebuild it explicitly.`);
+          }
+          console.log(`Working batch ${working.digest.date} (${working.digest.categories.join(', ')}): ${working.digest.papers.length} papers.`);
         } else {
           if (command === 'score') pruneListingData(app, papers);
           let digest = readWorkingListing(app)?.digest;
