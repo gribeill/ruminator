@@ -15,7 +15,7 @@
  */
 
 import { countTokens } from 'gpt-tokenizer/encoding/o200k_base';
-import { validateTokenizer, type TokenizerConfig } from './config.ts';
+import { validateTokenizer, type TokenizerConfig } from './config-text.ts';
 
 export interface TextMessage {
   role: 'system' | 'user' | 'assistant';

@@ -21,7 +21,7 @@ export class ResponseTooLargeError extends Error {
 /** Bound decoded response bytes before XML/JSON parsing, even without a trustworthy
  * Content-Length. Never truncate: cancel on overflow and discard the partial body.
  */
-export async function readResponseText(response: Response, maxBytes: number): Promise<string> {
+export async function readResponseText(response: Pick<Response, 'headers' | 'body'>, maxBytes: number): Promise<string> {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw new Error('Response byte limit must be a positive safe integer');
   if (Number(response.headers.get('content-length')) > maxBytes) {
     await response.body?.cancel().catch(() => {});
@@ -40,7 +40,11 @@ export async function readResponseText(response: Response, maxBytes: number): Pr
       chunks.push(value);
     }
     // Decode only after joining bytes, preserving UTF-8 across chunk boundaries.
-    return Buffer.concat(chunks, bytes).toString('utf8');
+    const joined = new Uint8Array(bytes);
+    let offset = 0;
+    for (const chunk of chunks) { joined.set(chunk, offset); offset += chunk.byteLength; }
+    // Preserve BOM behavior from Node Buffer decoding, but run without Node built-ins.
+    return new TextDecoder('utf-8', { ignoreBOM: true }).decode(joined);
   } catch (error) {
     await reader.cancel().catch(() => {});
     throw error;

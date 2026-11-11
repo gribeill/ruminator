@@ -15,9 +15,9 @@
  */
 
 import type { Batch, Paper } from './arxiv.ts';
-import type { SemanticScores } from './scoring.ts';
+import type { SemanticScores } from './semantic-types.ts';
 import type { Ranking } from './ranking.ts';
-import type { PaperSummary } from './summaries.ts';
+import type { PaperSummary } from './summary-content.ts';
 
 export interface Digest {
   date: string;
@@ -27,6 +27,18 @@ export interface Digest {
   semantic?: SemanticScores;
   ranking?: Ranking;
   summaries?: Record<string, PaperSummary>;
+}
+
+/** Resolve the saved ranked selection for text retrieval and summarization. */
+export function featuredPapers(digest: Digest): Paper[] {
+  if (!digest.ranking) throw new Error('Save a ranking with npm run score before using featured papers');
+  const selected = digest.ranking.featured;
+  if (selected.length > 6 || new Set(selected.map(p => p.id)).size !== selected.length) throw new Error('Invalid featured selection');
+  return selected.map(({ id }) => {
+    const paper = digest.papers.find(p => p.id === id);
+    if (!paper) throw new Error(`Missing featured paper: ${id}`);
+    return paper;
+  });
 }
 
 /** Separate named seeds keep daily discovery stable across page refreshes. */

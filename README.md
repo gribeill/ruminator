@@ -71,6 +71,10 @@ Summaries are off by default. Enabling them sends featured papers' available arX
 
 See [summary setup and commands](commands.md#optional-ai-summaries) for credentials, token estimates, and explicit request controls. No model calls happen while browsing.
 
+## Hosted version preview
+
+Invite-only hosted reading is in development. Run `npm run dev:hosted` to try the public/private pages with local example accounts—no Cloudflare setup, email, or model calls. This preview is separate from your normal local data. See [the hosted guide](hosted.md) for what works and what remains before deployment.
+
 ## Local data and development
 
 Working data lives in `data/`: feed/text caches, the current listing and votes, and downloaded model assets. This is not an archive. Votes expire during generation after 365 days without an explicit change. Keep data you value before deleting databases; see [storage and resets](commands.md#storage-and-resets).

@@ -18,18 +18,21 @@ import { pdfUrl, type Paper } from './arxiv.ts';
 import type { Digest } from './digest.ts';
 import { escapeHtml as escape, renderMathText } from './math.ts';
 import { compactAuthors, displayName } from './authors.ts';
-import { summaryUnavailableLabel } from './summaries.ts';
+import { summaryUnavailableLabel } from './summary-content.ts';
 import { paperAnchor, type Votes } from './feedback.ts';
 
 export interface VotingView {
   votes: Votes;
   csrfToken: string;
+  action?: string;
 }
+
+export interface ReadingLink { href: string; label: string }
 
 function voteControls(id: string, voting?: VotingView): string {
   if (!voting) return '';
   const current = voting.votes[id] ?? 0;
-  return `<form class="vote-controls" method="post" action="/vote">
+  return `<form class="vote-controls" method="post" action="${escape(voting.action ?? '/vote')}">
 <input type="hidden" name="paper" value="${escape(id)}">
 <input type="hidden" name="token" value="${escape(voting.csrfToken)}">
 <button type="submit" name="value" value="${current === 1 ? 0 : 1}" aria-pressed="${current === 1}" aria-label="${current === 1 ? 'Clear upvote' : 'More relevant'}" title="${current === 1 ? 'Clear upvote' : 'More relevant to my interests'}">+</button>
@@ -96,7 +99,7 @@ function preparePaper(paper: Paper, digest: Digest, featured: boolean): (voting?
 /** Compile one publication into static HTML fragments, including all KaTeX output.
  * Reuse the returned renderer across requests; votes and CSRF tokens remain live.
  */
-export function createDigestRenderer(digest: Digest): (voting?: VotingView) => string {
+export function createDigestRenderer(digest: Digest, links: readonly ReadingLink[] = []): (voting?: VotingView) => string {
   const byId = new Map(digest.papers.map(p => [p.id, p]));
   const featuredIds = digest.ranking?.featured.map(p => p.id) ?? digest.featuredIds;
   const featured = featuredIds.map(id => byId.get(id)!);
@@ -151,7 +154,8 @@ details { margin: 1rem 0; }
 <pre class="cow" aria-hidden="true">${escape(cow)}</pre></div>
 <p>${escape(digest.categories.join(', '))} · Announcement: <time datetime="${escape(digest.date)}">${escape(digest.date)}</time> · ${digest.papers.length} papers</p>
 `;
-  return voting => `${header}${voting ? '<p>+ / − mean more/less relevant to your interests, not scientific quality. Votes affect future recommendations; this digest stays fixed.</p>' : ''}
+  const navigation = links.length ? `<nav>${links.map(link => `<a href="${escape(link.href)}">${escape(link.label)}</a>`).join(' · ')}</nav>` : '';
+  return voting => `${header}${navigation}${voting ? '<p>+ / − mean more/less relevant to your interests, not scientific quality. Votes affect future recommendations; this digest stays fixed.</p>' : ''}
 </header>
 <main>
 <section><h2>${featuredHeading}</h2>

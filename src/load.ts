@@ -16,8 +16,7 @@
 
 import type { DatabaseSync } from 'node:sqlite';
 import { fetchBatch, type Batch } from './arxiv.ts';
-import { archivedBatch, cachedDownload, saveDigest, saveDownload } from './store.ts';
-import type { Digest } from './digest.ts';
+import { archivedBatch, cachedDownload, saveDownload } from './store.ts';
 
 /** Use arXiv's timezone for download freshness, independently of batch dates. */
 export function downloadDay(date: Date): string {
@@ -52,8 +51,4 @@ export async function loadDailyBatches(papersDb: DatabaseSync, categories: strin
     batches.push(archivedBatch(papersDb, category, batch.date)!);
   }
   return batches;
-}
-
-export async function loadDailyDigest(papersDb: DatabaseSync, appDb: DatabaseSync, categories: string[], options: LoadOptions = {}): Promise<Digest> {
-  return saveDigest(appDb, await loadDailyBatches(papersDb, categories, options));
 }

@@ -14,10 +14,22 @@
  * limitations under the License.
  */
 
+import type { Paper } from './arxiv.ts';
+import type { Profile } from './profile-text.ts';
+
 export interface EmbeddingInput {
   kind: 'paper' | 'profile';
   title: string;
   text: string;
+}
+
+/** Field order and text are part of the persisted embedding cache identity. */
+export function paperEmbeddingInput(paper: Pick<Paper, 'title' | 'abstract'>): EmbeddingInput {
+  return { kind: 'paper', title: paper.title, text: paper.abstract };
+}
+
+export function profileEmbeddingInput(profile: Pick<Profile, 'title' | 'subjects'>): EmbeddingInput {
+  return { kind: 'profile', title: profile.title, text: profile.subjects.join('\n') };
 }
 
 export interface EmbeddingProvider {

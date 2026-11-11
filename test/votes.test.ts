@@ -27,7 +27,7 @@ import type { EmbeddingProvider } from '../src/embeddings.ts';
 import { DEFAULT_FEEDBACK_CONFIG, paperAnchor } from '../src/feedback.ts';
 import { createDigestServer } from '../src/server.ts';
 import { scoreDigest } from '../src/scoring.ts';
-import { captureFeedback, latestDigest, openAppDatabase, readVotes, saveDigest, saveVote } from '../src/store.ts';
+import { captureFeedback, readDigest, openAppDatabase, readVotes, saveDigest, saveVote } from '../src/store.ts';
 
 const quiet = () => {};
 const profiles = [{ id: 'interest', title: 'Interest', subjects: ['Physics'], keywords: [] }];
@@ -96,7 +96,7 @@ test('feedback uses only votes captured at generation start and never changes a 
     assert.equal(first.ranking!.scores['2611.00012'].feedback, 0.5);
     assert.equal(first.ranking!.feedbackSnapshot!.fingerprint, provider.fingerprint);
     assert.equal(first.ranking!.feedbackSnapshot!.votes[0].value, 1);
-    const stored = JSON.stringify(latestDigest(db, ['quant-ph'])!.ranking);
+    const stored = JSON.stringify(readDigest(db, pending.date, pending.categories)!.ranking);
     saveVote(db, batch.papers[1], 0);
     const again = await scoreDigest(db, pending, profiles, async () => { throw new Error('Never recompute saved ranking'); }, quiet);
     assert.equal(JSON.stringify(again.ranking), stored);
@@ -189,7 +189,7 @@ test('native voting forms cover every posting, persist toggle/change/clear, and 
     form.set('value', '0');
     await post(form);
     assert.equal(readVotes(db)[remaining], undefined);
-    assert.equal(JSON.stringify(latestDigest(db, ['quant-ph'])!.ranking), ranking);
+    assert.equal(JSON.stringify(readDigest(db, digest.date, digest.categories)!.ranking), ranking);
 
     form.set('value', '1');
     assert.equal((await post(form, { Origin: 'https://attacker.example' })).status, 403);

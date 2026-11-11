@@ -14,21 +14,21 @@
  * limitations under the License.
  */
 
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Config } from './config.ts';
 import type { Digest } from './digest.ts';
-import type { EmbeddingInput } from './embeddings.ts';
+import { paperEmbeddingInput, profileEmbeddingInput, type EmbeddingInput } from './embeddings.ts';
 import type { Profile } from './profiles.ts';
 import type { FeedbackInput } from './feedback.ts';
-import { captureFeedback, readDigest } from './store.ts';
+import { captureFeedback, digestKey, embeddingInputHash, readDigest } from './store.ts';
 
 export interface Publication { generationId: string; digest: Digest }
 export interface GenerationInputs { config: Config; profiles: Profile[] }
 export interface WorkingListing extends Publication { inputs?: GenerationInputs }
 
 export function sameBatch(a: Digest, b: Digest): boolean {
-  return a.date === b.date && JSON.stringify([...a.categories].sort()) === JSON.stringify([...b.categories].sort());
+  return a.date === b.date && digestKey(a)[1] === digestKey(b)[1];
 }
 
 export function readPublication(db: DatabaseSync): Publication | undefined {
@@ -55,16 +55,16 @@ export function selectWorkingListing(db: DatabaseSync, digest: Digest, clear = f
     for (const table of ['digests', 'semantic_scores', 'rankings', 'feedback_snapshots', 'digest_summaries', 'summary_runs']) {
       if (clear) db.exec(`DELETE FROM ${table}`);
       else db.prepare(`DELETE FROM ${table} WHERE announcement_date != ? OR categories_json != ?`)
-        .run(digest.date, JSON.stringify([...digest.categories].sort()));
+        .run(...digestKey(digest));
     }
     db.exec('DELETE FROM summary_cache');
     // A clear starts with the newly fetched source, not the old ranked workspace.
     if (clear) db.prepare(`INSERT INTO digests (announcement_date, categories_json, papers_json, featured_ids_json)
-      VALUES (?, ?, ?, ?)`).run(digest.date, JSON.stringify([...digest.categories].sort()), JSON.stringify(digest.papers), JSON.stringify(digest.featuredIds));
+      VALUES (?, ?, ?, ?)`).run(...digestKey(digest), JSON.stringify(digest.papers), JSON.stringify(digest.featuredIds));
     db.prepare(`INSERT INTO working_listing (singleton, generation_id, announcement_date, categories_json, inputs_json)
       VALUES (1, ?, ?, ?, NULL) ON CONFLICT (singleton) DO UPDATE SET generation_id = excluded.generation_id,
       announcement_date = excluded.announcement_date, categories_json = excluded.categories_json, inputs_json = NULL`)
-      .run(randomUUID(), digest.date, JSON.stringify([...digest.categories].sort()));
+      .run(randomUUID(), ...digestKey(digest));
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
@@ -141,13 +141,13 @@ export function pruneListingData(app: DatabaseSync, papers: DatabaseSync, now = 
   const published = readPublication(app);
   const digests = [working?.digest, published?.digest].filter((d): d is Digest => !!d);
   const hashes = new Set<string>();
-  const keepInput = (input: EmbeddingInput) => hashes.add(createHash('sha256').update(JSON.stringify(input)).digest('hex'));
-  const keepPaper = (paper: Digest['papers'][number]) => keepInput({ kind: 'paper', title: paper.title, text: paper.abstract });
+  const keepInput = (input: EmbeddingInput) => hashes.add(embeddingInputHash(input));
+  const keepPaper = (paper: Digest['papers'][number]) => keepInput(paperEmbeddingInput(paper));
   for (const digest of digests) {
     digest.papers.forEach(keepPaper);
-    for (const profile of digest.semantic?.profiles ?? []) keepInput({ kind: 'profile', title: profile.title, text: profile.subjects.join('\n') });
+    for (const profile of digest.semantic?.profiles ?? []) keepInput(profileEmbeddingInput(profile));
   }
-  for (const profile of working?.inputs?.profiles ?? []) keepInput({ kind: 'profile', title: profile.title, text: profile.subjects.join('\n') });
+  for (const profile of working?.inputs?.profiles ?? []) keepInput(profileEmbeddingInput(profile));
   for (const row of app.prepare('SELECT paper_json FROM vote_events').all()) keepPaper(JSON.parse(row.paper_json as string));
   // Frozen feedback is needed only for an unfinished ranking, not as permanent vote history.
   if (working && !working.digest.ranking) {
@@ -161,7 +161,7 @@ export function pruneListingData(app: DatabaseSync, papers: DatabaseSync, now = 
     for (const table of ['digests', 'semantic_scores', 'rankings', 'feedback_snapshots', 'digest_summaries', 'summary_runs']) {
       if (!working) app.exec(`DELETE FROM ${table}`);
       else app.prepare(`DELETE FROM ${table} WHERE announcement_date != ? OR categories_json != ?`)
-        .run(working.digest.date, JSON.stringify([...working.digest.categories].sort()));
+        .run(...digestKey(working.digest));
     }
     for (const row of app.prepare('SELECT fingerprint, content_hash FROM embeddings').all()) {
       if (!hashes.has(row.content_hash as string)) app.prepare('DELETE FROM embeddings WHERE fingerprint = ? AND content_hash = ?')

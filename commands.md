@@ -97,7 +97,7 @@ npm run generate -- --summarize
 
 For a new or unfinished listing, this retrieves featured papers' HTML, makes sequential summary requests, then publishes. Missing HTML, API failures, and budget skips leave readable abstracts and visible summary-status messages; they do not change ranking.
 
-**Only `generate --summarize` and online `summarize` authorize paid calls.** Requests use full available HTML text, not abstract-only substitutes. Local token estimates and configured budgets are not guaranteed dollar limits; check the provider's pricing and usage too.
+**Only `generate --summarize` and online `summarize` authorize paid summary calls.** Requests use full available HTML text, not abstract-only substitutes. Local token estimates and configured budgets are not guaranteed dollar limits; check the provider's pricing and usage too.
 
 ### Add summaries to an existing listing
 
@@ -170,6 +170,14 @@ Generation prunes superseded reading artifacts. Latest active votes are kept for
 
 For an ordinary reset, prefer `generate --clear`: it preserves votes and keeps the old page readable until replacement. Stop running processes and back up anything valuable before deleting databases. Deleting `app.sqlite` loses votes and the current listing; cached feeds and models can support a fresh offline generation, but not historical reconstruction. Development schemas have no migrations or compatibility layer.
 
+## Hosted auth preview
+
+```sh
+npm run dev:hosted
+```
+
+Open the printed loopback URL and choose an example account through **Log in to your reader**. This runs the hosted Worker locally with signed fixture identities, synthetic saved listings, private voting, and default-interest onboarding. No email, inference, or cloud resources are used; state resets on exit and normal `data/` databases are untouched. Editors and generation controls are not implemented yet. See [hosted.md](hosted.md) before deploying anything.
+
 ## Development checks
 
 ```sh
@@ -186,4 +194,6 @@ npm run test:model                  # May download model assets; no paid summari
 MODEL_OFFLINE=1 npm run test:model  # Requires already-cached assets
 ```
 
-Live generation contacts arXiv and may download model assets. Paid smoke tests require the summary credentials and explicit commands above; they are never part of the ordinary test suite.
+Hosted auth tests run in local workerd/D1 with signed fixture identities; no Cloudflare account is required. The completed feasibility experiments have been removed; their architecture findings remain in [the development plan](.agents/PLAN.md#retained-hosted-feasibility-findings).
+
+Live generation contacts arXiv and may download model assets. Paid summaries require the credentials and explicit summary commands described above; they are never part of the ordinary test suite.

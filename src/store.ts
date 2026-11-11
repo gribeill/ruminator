@@ -14,13 +14,15 @@
  * limitations under the License.
  */
 
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { Batch, Paper } from './arxiv.ts';
 import type { FeedbackConfig, FeedbackInput, VotedPaper, Votes, VoteValue } from './feedback.ts';
 import { createDigest, type Digest } from './digest.ts';
-import type { SemanticScores } from './scoring.ts';
+import type { SemanticScores } from './semantic-types.ts';
+import type { EmbeddingInput } from './embeddings.ts';
 import type { Ranking } from './ranking.ts';
 import type { CachedPaperText } from './fulltext.ts';
 import type { PaperSummary, SummaryConfig } from './summaries.ts';
@@ -46,6 +48,11 @@ export function openAppDatabase(path: string): DatabaseSync {
 
 export function openPaperDatabase(path: string): DatabaseSync {
   return openDatabase(path, 'papers');
+}
+
+/** Shared by cache writes and reachability pruning; preserve the original JSON bytes. */
+export function embeddingInputHash(input: EmbeddingInput): string {
+  return createHash('sha256').update(JSON.stringify(input)).digest('hex');
 }
 
 interface VoteRow {
@@ -137,7 +144,7 @@ export interface SummaryRun {
   budgetExhausted: boolean;
 }
 
-function digestKey(digest: Digest): [string, string] {
+export function digestKey(digest: Pick<Digest, 'date' | 'categories'>): [string, string] {
   return [digest.date, JSON.stringify([...digest.categories].sort())];
 }
 
@@ -244,19 +251,13 @@ function decodeDigest(row: DigestRow): Digest {
 
 export function readDigest(db: DatabaseSync, date: string, categories: string[]): Digest | undefined {
   const row = db.prepare('SELECT * FROM digests WHERE announcement_date = ? AND categories_json = ?')
-    .get(date, JSON.stringify([...categories].sort())) as DigestRow | undefined;
-  return row ? withScores(db, decodeDigest(row)) : undefined;
-}
-
-export function latestDigest(db: DatabaseSync, categories: string[]): Digest | undefined {
-  const row = db.prepare(`SELECT * FROM digests WHERE categories_json = ?
-    ORDER BY announcement_date DESC LIMIT 1`).get(JSON.stringify([...categories].sort())) as DigestRow | undefined;
+    .get(...digestKey({ date, categories })) as DigestRow | undefined;
   return row ? withScores(db, decodeDigest(row)) : undefined;
 }
 
 export function readSemanticScores(db: DatabaseSync, digest: Digest): SemanticScores | undefined {
   const row = db.prepare('SELECT scores_json FROM semantic_scores WHERE announcement_date = ? AND categories_json = ?')
-    .get(digest.date, JSON.stringify([...digest.categories].sort())) as { scores_json: string } | undefined;
+    .get(...digestKey(digest)) as { scores_json: string } | undefined;
   return row ? JSON.parse(row.scores_json) : undefined;
 }
 
@@ -270,33 +271,33 @@ function withScores(db: DatabaseSync, digest: Digest): Digest {
 
 export function saveSemanticScores(db: DatabaseSync, digest: Digest, scores: SemanticScores): SemanticScores {
   db.prepare(`INSERT INTO semantic_scores (announcement_date, categories_json, scores_json) VALUES (?, ?, ?)
-    ON CONFLICT DO NOTHING`).run(digest.date, JSON.stringify([...digest.categories].sort()), JSON.stringify(scores));
+    ON CONFLICT DO NOTHING`).run(...digestKey(digest), JSON.stringify(scores));
   return readSemanticScores(db, digest)!;
 }
 
 /** Persist working membership; the listing lifecycle keeps only one working batch. */
 export function saveDigest(db: DatabaseSync, batches: Batch[]): Digest {
   const digest = createDigest(batches);
-  const categories = JSON.stringify(digest.categories);
+  const [date, categories] = digestKey(digest);
   db.prepare(`INSERT INTO digests
     (announcement_date, categories_json, papers_json, featured_ids_json) VALUES (?, ?, ?, ?)
     ON CONFLICT (announcement_date, categories_json) DO NOTHING`).run(
-    digest.date, categories, JSON.stringify(digest.papers), JSON.stringify(digest.featuredIds),
+    date, categories, JSON.stringify(digest.papers), JSON.stringify(digest.featuredIds),
   );
   const row = db.prepare('SELECT * FROM digests WHERE announcement_date = ? AND categories_json = ?')
-    .get(digest.date, categories) as unknown as DigestRow;
+    .get(date, categories) as unknown as DigestRow;
   return withScores(db, decodeDigest(row));
 }
 
 export function readRanking(db: DatabaseSync, digest: Digest): Ranking | undefined {
   const row = db.prepare('SELECT ranking_json FROM rankings WHERE announcement_date = ? AND categories_json = ?')
-    .get(digest.date, JSON.stringify([...digest.categories].sort())) as { ranking_json: string } | undefined;
+    .get(...digestKey(digest)) as { ranking_json: string } | undefined;
   return row ? JSON.parse(row.ranking_json) : undefined;
 }
 
 export function saveRanking(db: DatabaseSync, digest: Digest, ranking: Ranking): Ranking {
   db.prepare(`INSERT INTO rankings (announcement_date, categories_json, ranking_json) VALUES (?, ?, ?)
-    ON CONFLICT DO NOTHING`).run(digest.date, JSON.stringify([...digest.categories].sort()), JSON.stringify(ranking));
+    ON CONFLICT DO NOTHING`).run(...digestKey(digest), JSON.stringify(ranking));
   return readRanking(db, digest)!;
 }
 

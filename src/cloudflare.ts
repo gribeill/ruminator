@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-import type { SummaryConfig, SummaryProvider, SummaryUsage } from './summaries.ts';
-import { SummaryError } from './summaries.ts';
+import { SummaryError, type SummaryConfig, type SummaryProvider, type SummaryUsage } from './summary-content.ts';
 import { readResponseText, ResponseTooLargeError } from './http-body.ts';
 
 export const MAX_SUMMARY_RESPONSE_BYTES = 1024 * 1024;

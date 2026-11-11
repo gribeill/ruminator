@@ -24,7 +24,7 @@ import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { extractArxivHtml, HTML_EXTRACTOR, retrieveFeaturedText } from '../src/fulltext.ts';
-import { latestDigest, openAppDatabase, openPaperDatabase, readPaperText, saveDigest, savePaperText } from '../src/store.ts';
+import { readDigest, openAppDatabase, openPaperDatabase, readPaperText, saveDigest, savePaperText } from '../src/store.ts';
 import { scoreDigest } from '../src/scoring.ts';
 import { selectWorkingListing } from '../src/listing-store.ts';
 
@@ -92,7 +92,7 @@ test('six sequential HTML requests, persistent positive/negative caches, explici
   const app = openAppDatabase(join(dir, 'app.sqlite'));
   let papers = openPaperDatabase(join(dir, 'papers.sqlite'));
   const digest = await scoreDigest(app, saveDigest(app, [batch]), profiles, provider, quiet);
-  const original = JSON.stringify(latestDigest(app, ['quant-ph']));
+  const original = JSON.stringify(readDigest(app, digest.date, digest.categories));
   const selected = digest.ranking!.featured.map(p => p.id);
   const requested: string[] = [];
   let repaired = false;
@@ -145,7 +145,7 @@ test('six sequential HTML requests, persistent positive/negative caches, explici
     const retried = await retrieveFeaturedText(papers, digest, { ...opts, retryUnavailable: true });
     assert.ok(retried.every(r => r.status === 'available'));
     assert.equal(requested.length, 8); // Only the two failures retried.
-    assert.equal(JSON.stringify(latestDigest(app, ['quant-ph'])), original);
+    assert.equal(JSON.stringify(readDigest(app, digest.date, digest.categories)), original);
     app.close();
     rmSync(join(dir, 'app.sqlite'));
     const reset = openAppDatabase(join(dir, 'app.sqlite'));
@@ -204,7 +204,7 @@ test('text CLI reads saved selections offline without loading a model or changin
     assert.match(result.stdout, /HTML text available/);
     assert.doesNotMatch(result.stdout, /Computing local scores|Browse http/);
     const reopened = openAppDatabase(appPath);
-    assert.deepEqual(latestDigest(reopened, ['quant-ph']), digest);
+    assert.deepEqual(readDigest(reopened, digest.date, digest.categories), digest);
     reopened.close();
     const source = openPaperDatabase(papersPath);
     assert.deepEqual(readPaperText(source, digest.papers[0])!.result, cached[0]);

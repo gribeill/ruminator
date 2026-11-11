@@ -7,6 +7,7 @@
 # Local TypeScript app
 node_modules/
 .npm-cache/
+.wrangler/
 data/
 
 # Byte-compiled / optimized / DLL files

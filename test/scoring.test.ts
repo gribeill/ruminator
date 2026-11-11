@@ -21,9 +21,9 @@ import { parseHTML } from 'linkedom';
 import { paperAnchor } from '../src/feedback.ts';
 import { parseFeed } from '../src/arxiv.ts';
 import { createBgeProvider } from '../src/bge.ts';
-import { averageVectors, normalize, splitChunks, type EmbeddingProvider, type Tokenizer } from '../src/embeddings.ts';
+import { averageVectors, normalize, paperEmbeddingInput, profileEmbeddingInput, splitChunks, type EmbeddingProvider, type Tokenizer } from '../src/embeddings.ts';
 import { cachedEmbedding, scoreDigest, visibleScore } from '../src/scoring.ts';
-import { latestDigest, openAppDatabase, readSemanticScores, saveDigest, saveSemanticScores } from '../src/store.ts';
+import { embeddingInputHash, readDigest, openAppDatabase, readSemanticScores, saveDigest, saveSemanticScores } from '../src/store.ts';
 import { renderDigest } from '../src/render.ts';
 
 const batch = parseFeed(readFileSync(new URL('./fixtures/quant-ph.xml', import.meta.url), 'utf8'), 'quant-ph');
@@ -80,7 +80,11 @@ test('SQLite vector cache isolates models, content edits, and input roles', asyn
     fingerprint: 'model-a', dimensions: 2,
     async embed() { calls++; return [3, 4]; },
   };
-  const input = { kind: 'paper' as const, title: 'Qubits', text: 'Abstract' };
+  const input = paperEmbeddingInput({ title: 'Qubits', abstract: 'Abstract' });
+  // Pin the pre-cleanup bytes so caching and pruning keep existing vectors reachable.
+  assert.equal(embeddingInputHash(input), '422ddbc1929397d35e924d4eb2b8d2a83504ca3170496dee9e0156a50375ee39');
+  assert.equal(embeddingInputHash(profileEmbeddingInput({ title: 'Physics', subjects: ['Quantum', 'Control'] })),
+    '1fd4e32d0a648cad2135b6341fa44f86d3fa914488897ce75c52362dce0ff998');
   try {
     assert.deepEqual(await cachedEmbedding(db, provider, input), [0.6, 0.8]);
     await cachedEmbedding(db, provider, input);
@@ -144,7 +148,7 @@ test('scores use the strongest profile, display two decimal places, and remain f
     assert.equal(scored.ranking!.featured.length, 6);
     assert.deepEqual([...document.querySelectorAll('.selection')].map(label => label.textContent),
       ['Selected', 'Selected', 'Selected', 'Selected', 'Adjacent', 'Wildcard']);
-    assert.deepEqual(latestDigest(db, ['quant-ph']), scored);
+    assert.deepEqual(readDigest(db, digest.date, digest.categories), scored);
     const again = await scoreDigest(db, digest, [{ ...profiles[0], subjects: ['Changed'] }], async () => {
       throw new Error('Published scores must not initialize the model again');
     }, log);

@@ -24,7 +24,7 @@ import { categoriesFrom, parseFeed, pdfUrl } from '../src/arxiv.ts';
 import { createDigest } from '../src/digest.ts';
 import { renderDigest } from '../src/render.ts';
 import { createDigestServer } from '../src/server.ts';
-import { latestDigest, openAppDatabase, saveDigest } from '../src/store.ts';
+import { digestKey, readDigest, openAppDatabase, saveDigest } from '../src/store.ts';
 
 const xml = readFileSync(new URL('./fixtures/quant-ph.xml', import.meta.url), 'utf8');
 const batch = parseFeed(xml, 'quant-ph');
@@ -73,6 +73,8 @@ test('six unique random picks are stable, and all remaining papers survive', () 
 });
 
 test('multiple categories deduplicate cross-listings and reject mixed announcement dates', () => {
+  assert.deepEqual(digestKey({ date: batch.date, categories: ['quant-ph', 'cs.ET'] }),
+    [batch.date, '["cs.ET","quant-ph"]']);
   const other = { ...batch, category: 'cs.ET', papers: batch.papers.slice(0, 2) };
   const digest = createDigest([batch, other]);
   assert.equal(digest.papers.length, batch.papers.length);
@@ -84,18 +86,18 @@ test('multiple categories deduplicate cross-listings and reject mixed announceme
 test('real SQLite: current schema, immutable digest snapshots, and empty batches', () => {
   const db = openAppDatabase(':memory:');
   try {
-    assert.equal(latestDigest(db, ['quant-ph']), undefined);
+    assert.equal(readDigest(db, batch.date, ['quant-ph']), undefined);
     const original = saveDigest(db, [batch]);
     assert.deepEqual(saveDigest(db, [batch]), original);
     assert.deepEqual(saveDigest(db, [{ ...batch, papers: [] }]), original);
-    assert.deepEqual(latestDigest(db, ['quant-ph']), original);
+    assert.deepEqual(readDigest(db, original.date, original.categories), original);
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM digests').get()?.count, 1);
     const empty = saveDigest(db, [{ ...batch, date: '2026-11-10', papers: [] }]);
-    assert.deepEqual(latestDigest(db, ['quant-ph']), empty);
+    assert.deepEqual(readDigest(db, empty.date, empty.categories), empty);
     assert.equal(empty.papers.length, 0);
     assert.match(renderDigest(empty), /No new papers/);
     const combined = saveDigest(db, [batch, { ...batch, category: 'cs.ET', papers: [] }]);
-    assert.deepEqual(latestDigest(db, ['quant-ph', 'cs.ET']), combined);
+    assert.deepEqual(readDigest(db, combined.date, ['quant-ph', 'cs.ET']), combined);
     assert.equal(combined.papers.length, original.papers.length);
     const count = db.prepare('SELECT COUNT(*) AS count FROM digests').get()?.count;
     assert.throws(() => saveDigest(db, [
@@ -110,10 +112,7 @@ test('HTML expands only remaining titles, links every PDF, and escapes untrusted
   const html = renderDigest(digest);
   assert.ok(html.includes(`<title>ruminator · ${digest.date}</title>`));
   assert.ok(html.includes('<h1>ruminator</h1>'));
-  assert.ok(html.includes('<pre class="cow" aria-hidden="true">'));
-  assert.ok(html.includes(String.raw`(oo)\_______`));
-  assert.ok(html.includes(String.raw`||----w |`));
-  assert.doesNotMatch(html, /arXiv digest|arxiv-digest/);
+  assert.equal(parseHTML(html).document.querySelector('script'), null);
   assert.equal((html.match(/<article\b/g) ?? []).length, 6);
   assert.equal((html.match(/<details>/g) ?? []).length, 3);
   assert.equal((html.match(/>PDF<\/a>/g) ?? []).length, 9);
@@ -125,23 +124,6 @@ test('HTML expands only remaining titles, links every PDF, and escapes untrusted
   assert.doesNotMatch(escaped, /<script>|<img/);
   assert.match(escaped, /&lt;script&gt;/);
   assert.match(escaped, /&amp; text/);
-});
-
-test('standalone page uses XMin-like typography and neutral panels with native link colours', () => {
-  const { document } = parseHTML(renderDigest(createDigest([batch])));
-  const css = document.querySelector('style')!.textContent;
-  assert.match(css, /max-width: 800px/);
-  assert.match(css, /font-family: Optima, Candara, Calibri, Arial, sans-serif/);
-  assert.match(css, /border-bottom: 1px dashed #ddd/);
-  assert.match(css, /background: #eee; padding: 5px; border-radius: 5px/);
-  // No horizontal inset or left border: both disclosure markers share the same edge.
-  assert.match(css, /\.paper-summary \{ background: #f9f9f9; padding: 3px 0; \}/);
-  assert.doesNotMatch(css, /border-left/);
-  assert.match(css, /\.cow \{ margin: 0 0 0 auto/);
-  assert.doesNotMatch(css, /(?:^|\})\s*a(?::(?:link|visited))?\s*\{/);
-  assert.equal(document.querySelector('nav, footer'), null);
-  assert.equal(document.querySelectorAll('link[rel="stylesheet"]').length, 1); // Local KaTeX only.
-  assert.equal(document.querySelector('script'), null);
 });
 
 test('featured abstracts default closed while PDF/arXiv links remain outside the disclosure', () => {

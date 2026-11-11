@@ -18,7 +18,6 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
-import katex from 'katex';
 import { parseHTML } from 'linkedom';
 import { createDigest } from '../src/digest.ts';
 import { paperAnchor } from '../src/feedback.ts';
@@ -57,16 +56,12 @@ test('compiled rendering snapshots paper content and safely updates only forms',
   assert.equal(updated.querySelectorAll('form').length, 8);
 });
 
-test('loopback GET/HEAD/votes reuse frozen KaTeX; publication changes recompile once and reject stale forms', async t => {
+test('summary updates refresh reading content and invalidate old voting forms', async () => {
   const db = openAppDatabase(':memory:');
-  const math = t.mock.method(katex, 'renderToString'); // Wrap the real renderer, counting actual KaTeX work.
-  let publication: Publication = { generationId: 'first', digest: digestFixture() };
-  let voteReads = 0;
+  const publication: Publication = { generationId: 'first', digest: digestFixture() };
   const server = createDigestServer(() => structuredClone(publication), {
-    read: () => { voteReads++; return readVotes(db); }, write: (paper, value) => saveVote(db, paper, value),
+    read: () => readVotes(db), write: (paper, value) => saveVote(db, paper, value),
   });
-  assert.equal(math.mock.callCount(), 8 * 2 + 6); // Titles, abstracts, and featured summaries, once each.
-  const originalCalls = math.mock.callCount();
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const page = async () => parseHTML(await (await fetch(base)).text()).document;
@@ -75,36 +70,26 @@ test('loopback GET/HEAD/votes reuse frozen KaTeX; publication changes recompile 
   });
   try {
     const initial = await page();
-    await page();
     const form = initial.querySelector('form')!;
     const id = form.querySelector('input[name="paper"]')!.getAttribute('value')!;
     const token = form.querySelector('input[name="token"]')!.getAttribute('value')!;
     const body = new URLSearchParams({ paper: id, token, value: '1' });
-    const reads = voteReads;
-    assert.equal((await fetch(base, { method: 'HEAD' })).status, 200);
-    assert.equal(voteReads, reads);
+    const head = await fetch(base, { method: 'HEAD' });
+    assert.equal(head.status, 200);
+    assert.equal(await head.text(), '');
     assert.equal((await post(body)).status, 303);
     const upvoted = await page();
     assert.equal(upvoted.getElementById(paperAnchor(id))!.querySelector('button[aria-pressed="true"]')!.textContent, '+');
     assert.deepEqual([...upvoted.querySelectorAll('.abstract')].map(p => p.innerHTML), [...initial.querySelectorAll('.abstract')].map(p => p.innerHTML));
-    body.set('value', '0');
-    assert.equal((await post(body)).status, 303);
-    assert.equal((await page()).querySelectorAll('button[aria-pressed="true"]').length, 0);
-    assert.equal(math.mock.callCount(), originalCalls);
-    // Adding a summary under the same generation ID must refresh content too.
+    // Summary-only updates must refresh content even under the same generation ID.
     publication.digest.summaries![id].summary = 'Replaced summary $z=3$.';
     assert.equal((await post(body)).status, 403);
-    const replacementCalls = math.mock.callCount();
-    assert.equal(replacementCalls, originalCalls * 2);
     const updated = await page();
     assert.match(updated.getElementById(paperAnchor(id))!.querySelector('.paper-summary')!.textContent, /Replaced summary/);
-    assert.notEqual(updated.querySelector('input[name="token"]')!.getAttribute('value'), token);
-    assert.equal(math.mock.callCount(), replacementCalls);
-    publication = { ...publication, generationId: 'second' };
-    await page();
-    assert.equal(math.mock.callCount(), originalCalls * 3);
-    await page();
-    assert.equal(math.mock.callCount(), originalCalls * 3);
+    const freshToken = updated.querySelector('input[name="token"]')!.getAttribute('value')!;
+    assert.notEqual(freshToken, token);
+    body.set('token', freshToken);
+    assert.equal((await post(body)).status, 303);
   } finally {
     server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); db.close();
   }

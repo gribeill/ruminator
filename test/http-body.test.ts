@@ -48,6 +48,8 @@ test('bounded text reads preserve split UTF-8 and enforce exact byte boundaries'
   await assert.rejects(readResponseText(tooSmall.response, bytes.length - 1), ResponseTooLargeError);
   assert.equal(tooSmall.cancellations(), 1);
   assert.equal(await readResponseText(new Response(null), 8), '');
+  assert.equal(await readResponseText(new Response('\uFEFFbody'), 8), '\uFEFFbody');
+  assert.equal(await readResponseText(new Request('http://localhost/form', { method: 'POST', body: 'vote=1' }), 8), 'vote=1');
 });
 
 test('declared, missing, or misleading lengths cannot bypass the stream limit; overflow cancels without reading the rest', async () => {

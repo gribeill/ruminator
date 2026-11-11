@@ -11,8 +11,9 @@
     "generate": "node src/cli.ts generate",
     "fetch": "node src/cli.ts fetch",
     "serve": "node src/cli.ts serve",
+    "dev:hosted": "node scripts/hosted-preview.ts",
     "test": "node --test test/*.test.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit --project src/hosted/tsconfig.json",
     "score": "node src/cli.ts score",
     "text": "node src/cli.ts text",
     "summarize": "node src/cli.ts summarize",
@@ -22,13 +23,16 @@
     "@huggingface/transformers": "4.3.2",
     "fast-xml-parser": "^5.0.0",
     "gpt-tokenizer": "^4.1.1",
+    "jose": "6.2.17",
     "katex": "^0.19.1",
     "linkedom": "^0.18.15",
     "smol-toml": "^1.9.1"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "5.20261110.1",
     "@types/katex": "^0.16.8",
     "@types/node": "^24.0.0",
-    "typescript": "^5.8.0"
+    "typescript": "^5.8.0",
+    "wrangler": "4.160.0"
   }
 }

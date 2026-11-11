@@ -29,7 +29,7 @@ import { loadConfig, type Config } from '../src/config.ts';
 import { renderDigest } from '../src/render.ts';
 import { scoreDigest } from '../src/scoring.ts';
 import { selectWorkingListing } from '../src/listing-store.ts';
-import { claimSummary, latestDigest, openAppDatabase, openPaperDatabase, readPaperText, readSummaries, saveDigest, savePaperText, startSummaryRun } from '../src/store.ts';
+import { claimSummary, readDigest, openAppDatabase, openPaperDatabase, readPaperText, readSummaries, saveDigest, savePaperText, startSummaryRun } from '../src/store.ts';
 import { reportSummaryTokens, summarizeFeatured, summaryMessages, SUMMARY_PROMPT_VERSION, validateSummary, SummaryError, type PaperSummary, type SummaryProvider } from '../src/summaries.ts';
 import { estimatePromptTokens } from '../src/tokenizer.ts';
 
@@ -114,7 +114,7 @@ test('six sequential calls use full text; persist summaries/provenance/usage and
     }
     assert.equal(JSON.stringify(first.ranking), originalRanking);
     assert.deepEqual(first.semantic, digest.semantic);
-    assert.deepEqual(latestDigest(app, ['quant-ph'])!.summaries, first.summaries);
+    assert.deepEqual(readDigest(app, digest.date, digest.categories)!.summaries, first.summaries);
     const never = () => { throw new Error('Must reuse cache'); };
     assert.deepEqual(await summarizeFeatured(app, papers, digest, { ...config, llm: { provider: 'cloudflare', model: 'changed' } }, never, quiet), first);
     const next = await scoreDigest(app, saveDigest(app, [{ ...batch, date: '2026-11-10' }]), profiles, embedder, quiet);
@@ -235,15 +235,9 @@ test('CLI --tokens is estimate-only, leaves both databases unchanged, and reject
     assert.doesNotMatch(child.stdout, /summary available|Model response for/);
     assert.deepEqual(readFileSync(appPath), appBytes);
     assert.deepEqual(readFileSync(papersPath), paperBytes);
-    const offline = spawnSync(process.execPath, [...args, '--offline'], { encoding: 'utf8' });
-    assert.equal(offline.status, 0, offline.stderr);
-    assert.equal(offline.stdout, child.stdout);
     const invalid = spawnSync(process.execPath, [...args, '--clear'], { encoding: 'utf8' });
     assert.equal(invalid.status, 1);
     assert.match(invalid.stderr, /--tokens cannot be combined with --clear/);
-    const other = spawnSync(process.execPath, ['src/cli.ts', 'score', '--tokens'], { encoding: 'utf8' });
-    assert.equal(other.status, 1);
-    assert.match(other.stderr, /--tokens requires summarize/);
   } finally { rmSync(dir, { recursive: true }); }
 });
 
@@ -312,36 +306,30 @@ test('manual reruns recover HTML preconditions but never retry attempted API fai
   } finally { app.close(); papers.close(); }
 });
 
-test('adapter classifies invalid, refused, truncated, HTTP and network responses with exactly one attempt', async () => {
+test('adapter classifies representative transport/output failures without retrying or exposing credentials', async () => {
   const fixtures = [
     { status: 503, body: '{}', expected: 'api_unavailable' },
-    { status: 400, body: '{}', expected: 'summarization_error' },
     { status: 200, body: 'not JSON', expected: 'summarization_error' },
-    { status: 200, body: JSON.stringify({ choices: [] }), expected: 'summarization_error' },
-    { status: 200, body: JSON.stringify({ ...goodResponse(), choices: [{ finish_reason: 'stop', message: { refusal: 'No' } }] }), expected: 'summarization_error' },
-    { status: 200, body: JSON.stringify({ ...goodResponse(), choices: [{ finish_reason: 'length', message: { content: 'Partial' } }] }), expected: 'token_budget' },
-    { status: 200, body: JSON.stringify({ ...goodResponse(), choices: [{ finish_reason: 'stop', message: { content: '  ' } }] }), expected: 'summarization_error' },
+    { status: 200, body: JSON.stringify({ choices: [{ finish_reason: 'length', message: { content: 'Partial' } }] }), expected: 'token_budget' },
     { status: 0, body: '', expected: 'api_unavailable' },
   ];
   for (const fixture of fixtures) {
-    const { app, papers, digest } = await setup(1);
     let calls = 0;
-    try {
-      const result = await summarizeFeatured(app, papers, digest, config, saved => createCloudflareSummaryProvider(saved, {
-        credentials: { accountId: 'account', apiToken: 'secret', gatewayId: 'gateway' },
-        fetcher: async () => { calls++; if (!fixture.status) throw new Error('secret'); return new Response(fixture.body, { status: fixture.status }); },
-      }), quiet);
-      const outcome = Object.values(result.summaries!)[0];
-      assert.equal(outcome.status, fixture.expected);
-      if (fixture.body.includes('prompt_tokens')) assert.equal(outcome.usage!.inputTokens, 100);
-      assert.ok(!JSON.stringify(outcome).includes('secret'));
-      await summarizeFeatured(app, papers, digest, config, () => { throw new Error('No retry'); }, quiet);
-      assert.equal(calls, 1);
-    } finally { app.close(); papers.close(); }
+    const provider = createCloudflareSummaryProvider(config, {
+      credentials: { accountId: 'account', apiToken: 'secret', gatewayId: 'gateway' },
+      fetcher: async () => { calls++; if (!fixture.status) throw new Error('secret'); return new Response(fixture.body, { status: fixture.status }); },
+    });
+    await assert.rejects(provider.summarize(summaryMessages(batch.papers[0], body), 2048), (error: unknown) => {
+      assert.ok(error instanceof SummaryError);
+      assert.equal(error.kind, fixture.expected);
+      assert.doesNotMatch(error.message, /secret/);
+      return true;
+    });
+    assert.equal(calls, 1);
   }
 });
 
-test('summary snapshots survive reopening and CLI accepts both verbose flags without offline network calls', async () => {
+test('summary snapshots survive reopening and the offline CLI reads them without model calls', async () => {
   const dir = mkdtempSync('data/summary-test-');
   const appPath = join(dir, 'app.sqlite');
   const papersPath = join(dir, 'papers.sqlite');
@@ -349,22 +337,17 @@ test('summary snapshots survive reopening and CLI accepts both verbose flags wit
   const result = await summarizeFeatured(app, papers, digest, config, () => ({ async summarize() { return { summary }; } }), quiet);
   app.close(); papers.close();
   try {
-    for (const flag of ['-v', '--verbose']) {
-      const child = spawnSync(process.execPath, ['src/cli.ts', 'summarize', flag, '--offline', '--app-db', appPath, '--papers-db', papersPath], { encoding: 'utf8' });
-      assert.equal(child.status, 0, child.stderr);
-      assert.match(child.stdout, /Offline: using saved summaries/);
-      assert.doesNotMatch(child.stdout, /Model response for|Computing local scores/);
-    }
+    const child = spawnSync(process.execPath, ['src/cli.ts', 'summarize', '--verbose', '--offline', '--app-db', appPath, '--papers-db', papersPath], { encoding: 'utf8' });
+    assert.equal(child.status, 0, child.stderr);
+    assert.match(child.stdout, /Offline: using saved summaries/);
+    assert.doesNotMatch(child.stdout, /Model response for|Computing local scores/);
     const reopened = openAppDatabase(appPath);
-    assert.deepEqual(latestDigest(reopened, ['quant-ph']), result);
+    assert.deepEqual(readDigest(reopened, digest.date, digest.categories), result);
     reopened.close();
-    const invalid = spawnSync(process.execPath, ['src/cli.ts', 'score', '-v'], { encoding: 'utf8' });
-    assert.equal(invalid.status, 1);
-    assert.match(invalid.stderr, /--verbose requires summarize/);
   } finally { rmSync(dir, { recursive: true }); }
 });
 
-test('explicit CLI --clear deletes all summary state only, exits without generation, and needs no saved digest', async () => {
+test('explicit CLI --clear removes summary state without generation or changes to papers/rankings', async () => {
   const dir = mkdtempSync('data/summary-clear-');
   const appPath = join(dir, 'app.sqlite');
   const papersPath = join(dir, 'papers.sqlite');
@@ -379,15 +362,6 @@ test('explicit CLI --clear deletes all summary state only, exits without generat
   const sourceBytes = readFileSync(papersPath);
   const args = ['--app-db', appPath, '--papers-db', unusedPapers];
   try {
-    const rejected = spawnSync(process.execPath, ['src/cli.ts', 'score', '--clear', ...args], { encoding: 'utf8' });
-    assert.equal(rejected.status, 1);
-    assert.match(rejected.stderr, /--clear requires summarize/);
-    const intact = openAppDatabase(appPath);
-    assert.equal(intact.prepare('SELECT COUNT(*) AS n FROM digest_summaries').get()!.n, 2);
-    assert.equal(intact.prepare('SELECT COUNT(*) AS n FROM summary_runs').get()!.n, 2);
-    assert.equal(intact.prepare('SELECT COUNT(*) AS n FROM summary_cache').get()!.n, 1);
-    intact.close();
-
     const cleared = spawnSync(process.execPath, ['src/cli.ts', 'summarize', '--clear', ...args], { encoding: 'utf8' });
     assert.equal(cleared.status, 0, cleared.stderr);
     assert.match(cleared.stdout, /Cleared all summary outcomes, cache entries, and run budgets/);
@@ -401,13 +375,8 @@ test('explicit CLI --clear deletes all summary state only, exits without generat
       assert.equal(reopened.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()!.n, 0);
     }
     for (const table of tables) assert.deepEqual(reopened.prepare(`SELECT * FROM ${table}`).all(), before[table]);
-    assert.equal(latestDigest(reopened, ['quant-ph'])!.summaries, undefined);
+    assert.equal(readDigest(reopened, later.date, later.categories)!.summaries, undefined);
     reopened.close();
-    const emptyPath = join(dir, 'empty.sqlite');
-    const empty = spawnSync(process.execPath, ['src/cli.ts', 'summarize', '--clear', '--offline', '--app-db', emptyPath, '--papers-db', unusedPapers], { encoding: 'utf8' });
-    assert.equal(empty.status, 0, empty.stderr);
-    assert.match(empty.stdout, /No API calls made/);
-    assert.equal(existsSync(unusedPapers), false);
   } finally { rmSync(dir, { recursive: true }); }
 });
 

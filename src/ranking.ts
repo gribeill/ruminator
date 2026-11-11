@@ -16,8 +16,8 @@
 
 import type { Paper } from './arxiv.ts';
 import { seededRandom, type Digest } from './digest.ts';
-import type { Profile } from './profiles.ts';
-import type { SemanticScores } from './scoring.ts';
+import type { Profile } from './profile-text.ts';
+import type { SemanticScores } from './semantic-types.ts';
 import { feedbackScore, type FeedbackSnapshot } from './feedback.ts';
 
 export interface ScoreWeights {
