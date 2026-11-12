@@ -23,7 +23,7 @@ export async function loadHostedSource(paper: Pick<Paper, 'id' | 'version'>, fet
     catch { /* A fresh source attempt may repair an unavailable precondition. */ }
   }
   try {
-    const response = await fetcher(sourceUrl, { redirect: 'error', signal: AbortSignal.timeout(HTML_REQUEST_TIMEOUT_MS),
+    const response = await fetcher(sourceUrl, { redirect: 'manual', signal: AbortSignal.timeout(HTML_REQUEST_TIMEOUT_MS),
       headers: { 'User-Agent': 'ruminator/0.1 (literature browser)', Accept: 'text/html' } });
     try {
       if (!response.ok || !response.body || !/^(text\/html|application\/xhtml\+xml)(;|$)/i.test(response.headers.get('content-type') ?? '')) {

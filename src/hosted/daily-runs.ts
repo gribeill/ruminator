@@ -51,8 +51,8 @@ export async function expireDailyRun(db: D1Database, userId: string, now = new D
  */
 export async function launchDailyGeneration(db: D1Database, workflow: Pick<Workflow<GenerationReference>, 'create'>,
   userId: string, batches: Batch[], modelIdentity: string,
-  { summariesRequested = false, now = new Date(), runDate = easternRunDate(now) }: {
-    summariesRequested?: boolean; now?: Date; runDate?: string;
+  { summariesRequested = false, now = new Date(), runDate = easternRunDate(now), adminId }: {
+    summariesRequested?: boolean; now?: Date; runDate?: string; adminId?: string;
   } = {}) {
   batches = structuredClone(batches);
   const deadline = nextWeekdayBoundary(runDate);
@@ -64,11 +64,12 @@ export async function launchDailyGeneration(db: D1Database, workflow: Pick<Workf
     SELECT u.id, ?, ?, ? FROM users u WHERE u.id = ? AND u.enabled = 1
       AND ? > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
       AND EXISTS (SELECT 1 FROM saved_config WHERE singleton = 1)
+      AND (? IS NULL OR EXISTS (SELECT 1 FROM users a WHERE a.id = ? AND a.role = 'admin' AND a.enabled = 1))
       AND NOT EXISTS (SELECT 1 FROM working_generations w WHERE w.user_id = u.id)
     ON CONFLICT (user_id) DO UPDATE SET run_date = excluded.run_date, generation_id = excluded.generation_id,
       deadline = excluded.deadline, finished_at = NULL, failure_reason = NULL
-    WHERE generation_runs.run_date < excluded.run_date AND generation_runs.finished_at IS NOT NULL`)
-    .bind(runDate, generationId, deadline, userId, deadline).run();
+    WHERE (generation_runs.run_date < excluded.run_date OR ? IS NOT NULL) AND generation_runs.finished_at IS NOT NULL`)
+    .bind(runDate, generationId, deadline, userId, deadline, adminId ?? null, adminId ?? null, adminId ?? null).run();
   if (!reserved.meta.changes) return { status: 'not-admitted' as const };
   const ref = { userId, generationId };
   const launchFailure = async (reason: 'preparation' | 'launch') => {

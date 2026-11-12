@@ -3,6 +3,7 @@
 
 import type { D1Database } from '@cloudflare/workers-types';
 import { escapeHtml } from '../math.ts';
+import { uiText, uiHtml } from '../ui-text.ts';
 
 /** Only the authenticated admin's own latest run, never another user's status.
  * Reading this message does not expire work or trigger execution.
@@ -14,24 +15,23 @@ export async function adminRunStatus(db: D1Database, userId: string): Promise<st
       failure_reason: string | null; last_success_at: string | null }>();
   if (!row) return '';
   const success = row.last_success_at
-    ? `Last successful run: <time datetime="${escapeHtml(row.last_success_at)}">${escapeHtml(row.last_success_at)} (UTC)</time>.`
-    : 'No successful hosted run has been recorded.';
-  let latest = 'No daily run has been admitted yet.';
+    ? `${uiHtml('status.last_success')} <time datetime="${escapeHtml(row.last_success_at)}">${uiHtml('status.utc_time', { time: row.last_success_at })}</time>.`
+    : uiHtml('status.no_success');
+  let latest = uiText('status.no_run');
   if (row.run_date) {
     if (row.failure_reason) {
-      const reasons: Record<string, string> = { preparation: 'input preparation failed', launch: 'Workflow launch failed or could not be confirmed',
-        run: 'generation failed', deadline: 'the next weekday boundary was reached', waiting: 'shared-work waiting was exhausted', disabled: 'the account was disabled' };
-      latest = `Latest run (${escapeHtml(row.run_date)}) encountered a failure: ${reasons[row.failure_reason] ?? 'generation failed'}. `
-        + (row.finished_at ? 'The published reading, if any, is unchanged.' : 'It remains pending until intervention or the next weekday boundary.');
-    } else if (!row.finished_at) latest = `Latest run (${escapeHtml(row.run_date)}) is pending or in progress; it has not succeeded yet.`;
-    else if (!row.generation_id) latest = `Latest daily check (${escapeHtml(row.run_date)}) found no new posting batch.`;
-    else latest = `Latest run (${escapeHtml(row.run_date)}) completed successfully.`;
+      const reasons: Record<string, string> = { preparation: 'status.preparation', launch: 'status.launch',
+        run: 'status.run', deadline: 'status.deadline', waiting: 'status.waiting', disabled: 'status.disabled' };
+      latest = uiText('status.failure', { date: row.run_date, reason: uiText(reasons[row.failure_reason] ?? 'status.run') }) + ' '
+        + uiText(row.finished_at ? 'status.preserved' : 'status.intervention');
+    } else if (!row.finished_at) latest = uiText('status.pending', { date: row.run_date });
+    else if (!row.generation_id) latest = uiText('status.unchanged', { date: row.run_date });
+    else latest = uiText('status.completed', { date: row.run_date });
   }
   const pass = await db.prepare('SELECT run_date, status FROM scheduled_pass WHERE singleton = 1')
     .first<{ run_date: string; status: string }>();
-  const messages: Record<string, string> = { running: 'admission pass pending or interrupted; no automatic retry',
-    complete: 'admission pass complete; individual generations finish independently',
-    'feed-failed': 'feed ingestion failed; no users were admitted by this pass', failed: 'scheduled pass failed; no automatic retry' };
-  const shared = pass ? `<p>Shared weekday check (${escapeHtml(pass.run_date)}): ${messages[pass.status] ?? 'unavailable'}.</p>` : '';
-  return `<section aria-label="Generation status"><p>${success}</p><p>${latest}</p>${shared}</section>`;
+  const messages: Record<string, string> = { running: 'status.shared_running', complete: 'status.shared_complete',
+    'feed-failed': 'status.shared_feed_failed', failed: 'status.shared_failed' };
+  const shared = pass ? `<p>${uiHtml('status.shared', { date: pass.run_date, message: uiText(messages[pass.status] ?? 'status.unavailable') })}</p>` : '';
+  return `<section aria-label="${uiHtml('status.label')}"><p>${success}</p><p>${escapeHtml(latest)}</p>${shared}</section>`;
 }

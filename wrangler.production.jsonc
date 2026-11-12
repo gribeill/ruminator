@@ -1,24 +1,33 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  // Execution wiring is dormant: no Workflow binding or cron triggers.
-  // Enabling execution/scheduling requires separate explicit approval.
+  // Approved weekday 06:00 America/New_York schedule, including DST.
+  // Both UTC candidates fire; scheduledRunDate admits only the Eastern 06:00 event.
   "name": "ruminator",
   "main": "src/hosted/worker.ts",
+  "rules": [{ "type": "Text", "globs": ["**/ui_text.toml"], "fallthrough": true }],
   "compatibility_date": "2026-01-01",
   "workers_dev": false,
   "preview_urls": false,
   "routes": [{ "pattern": "papers.ribeill.net", "custom_domain": true }],
   "vars": {
-    "HOSTED_EXECUTION_ENABLED": "false",
-    "HOSTED_SCHEDULE_ENABLED": "false",
+    "HOSTED_EXECUTION_ENABLED": "true",
+    "HOSTED_SCHEDULE_ENABLED": "true",
+    "CLOUDFLARE_ACCOUNT_ID": "5be9113ef6e3462f62ef5a7df6d8820e",
+    "CLOUDFLARE_GATEWAY_ID": "ruminator",
     "PUBLIC_ORIGIN": "https://papers.ribeill.net",
     "ACCESS_ISSUER": "https://ruminator.cloudflareaccess.com",
     "ACCESS_AUDIENCE": "c280d8a4336c21c167a4c8b0f92ff6ff48dcd7d0184f76bff75b05a12391c6ef"
   },
+  "triggers": { "crons": ["0 10,11 * * 1-5"] },
   "assets": { "directory": ".wrangler/hosted-assets", "binding": "ASSETS", "run_worker_first": true },
+  "workflows": [{
+    "binding": "GENERATION",
+    "name": "ruminator-generation",
+    "class_name": "GenerationWorkflow"
+  }],
   "d1_databases": [{
     "binding": "DB",
-    "database_name": "ruminator",
-    "database_id": "0f927a2c-5dcb-4d26-86e3-1f9b8e4c55d7"
+    "database_name": "ruminator-current",
+    "database_id": "52259edf-c977-419c-9b70-1850b5f8f33d"
   }]
 }

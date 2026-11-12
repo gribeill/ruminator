@@ -86,6 +86,8 @@ test('RSS and summary adapters bound real chunked/compressed HTTP bodies before 
       res.end(Buffer.alloc(MAX_RSS_BYTES + 1, 120));
     } else if (req.url === '/rss-error') {
       res.writeHead(503); res.end('Temporary outage');
+    } else if (req.url === '/api-redirect') {
+      res.writeHead(307, { Location: '/api' }); res.end('Redirect must not be followed');
     } else if (req.url === '/api') {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Transfer-Encoding': 'chunked' });
       res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'Scientific description.' } }] }));
@@ -107,12 +109,14 @@ test('RSS and summary adapters bound real chunked/compressed HTTP bodies before 
     }
     await assert.rejects(fetchBatch('quant-ph', fetcher('/rss-error')), /HTTP 503/);
     const logs: string[] = [];
-    const provider = (path: string) => createCloudflareSummaryProvider(loadConfig(), {
+    const provider = (path: string, verbose = true) => createCloudflareSummaryProvider(loadConfig(), {
       credentials: { accountId: 'fixture-account', apiToken: 'fixture-secret', gatewayId: 'fixture-gateway' },
-      fetcher: fetcher(path), verbose: true, log: line => logs.push(line),
+      fetcher: fetcher(path), verbose, log: line => logs.push(line),
     });
     assert.equal((await provider('/api').summarize([{ role: 'user', content: 'Paper' }], 2048)).summary, 'Scientific description.');
     assert.equal(logs.length, 1);
+    await assert.rejects(provider('/api-redirect', false).summarize([{ role: 'user', content: 'Paper' }], 2048), /HTTP 307/);
+    assert.equal(requests.filter(path => path === '/api').length, 1); // No redirected credentials/body or second request.
     for (const path of ['/api-large', '/api-error-large', '/api-declared']) {
       await assert.rejects(provider(path).summarize([{ role: 'user', content: 'Paper' }], 2048),
         (error: unknown) => error instanceof SummaryError && error.kind === 'summarization_error' && /1 MiB size limit/.test(error.message));

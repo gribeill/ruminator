@@ -4,6 +4,8 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { parseConfig } from '../config-text.ts';
 import { parseProfiles } from '../profile-text.ts';
+import { DocumentError } from '../document-error.ts';
+import { uiText } from '../ui-text.ts';
 
 export interface SavedDocument { text: string; revision: number }
 export type SaveResult =
@@ -13,7 +15,7 @@ export type SaveResult =
 
 /** Bound editable documents well below D1's value and request limits. */
 function validate(text: string, kind: 'interests' | 'config'): void {
-  if (new TextEncoder().encode(text).length > 65536) throw new Error('Document exceeds 64 KiB');
+  if (new TextEncoder().encode(text).length > 65536) throw new DocumentError('document_large', 'Document exceeds 64 KiB');
   if (kind === 'interests') parseProfiles(text);
   else parseConfig(text);
 }
@@ -51,10 +53,12 @@ export async function saveConfig(db: D1Database, userId: string, expectedRevisio
 
 async function save(db: D1Database, userId: string, expectedRevision: number, text: string, kind: 'interests' | 'config'): Promise<SaveResult> {
   try {
-    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) throw new Error('Invalid document revision');
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) throw new DocumentError('document_revision', 'Invalid document revision');
     validate(text, kind);
   } catch (error) {
-    return { status: 'invalid', text, error: error instanceof Error ? error.message : 'Invalid document' };
+    const message = error instanceof DocumentError ? uiText(`validation.${error.code}`, error.values)
+      : error instanceof Error ? uiText('validation.syntax', { detail: error.message }) : uiText('validation.invalid');
+    return { status: 'invalid', text, error: message };
   }
   const admin = kind === 'config';
   const permission = `SELECT 1 FROM users WHERE id = ? AND enabled = 1${admin ? " AND role = 'admin'" : ''}`;

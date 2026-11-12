@@ -98,13 +98,14 @@ CREATE TABLE IF NOT EXISTS generation_runs (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS generation_run_id ON generation_runs(generation_id);
 
--- One consumed scheduled pass, including failed ingestion. Prevents duplicate
--- deliveries from fetching again or admitting a different partial cohort.
+-- One latest cohort pass. Scheduled dates are consumed even on ingestion failure;
+-- an attempt ID also consumes each freshly confirmed manual Populate feed form.
 -- No history, leases, takeover, or automatic recovery of interrupted passes.
 CREATE TABLE IF NOT EXISTS scheduled_pass (
   singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
   run_date TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('running', 'complete', 'feed-failed', 'failed')),
+  attempt_id TEXT,
   batch_date TEXT
 );
 

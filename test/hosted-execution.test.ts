@@ -19,7 +19,7 @@ test('hosted HTML transport is bounded, versioned, credential-free and has no re
   const source = await loadHostedSource(paper, async (input, init) => {
     calls++;
     assert.equal(input, 'https://arxiv.org/html/2601.00001v2');
-    assert.equal(init?.redirect, 'error'); assert.ok(init?.signal);
+    assert.equal(init?.redirect, 'manual'); assert.ok(init?.signal);
     assert.equal(new Headers(init?.headers).has('Authorization'), false);
     return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
   });
@@ -125,7 +125,7 @@ test('production composition remains gated, and real adapters execute only throu
   } finally { await inspector.dispose(); await fixture.close(); }
 });
 
-test('default Worker scheduled handler and manifests remain inert', { timeout: 120000 }, async () => {
+test('local preview remains inert; production declares only the authorized weekday schedule', { timeout: 120000 }, async () => {
   const fixture = await startHostedFixture();
   try {
     await fixture.worker.scheduled({ scheduledTime: new Date('2030-01-08T11:00:00Z'), cron: '0 10,11 * * 1-5' });
@@ -133,9 +133,16 @@ test('default Worker scheduled handler and manifests remain inert', { timeout: 1
     assert.equal(await fixture.db.prepare('SELECT 1 FROM generation_runs').first(), null);
     for (const path of ['wrangler.hosted.jsonc', 'wrangler.production.jsonc']) {
       const config = readFileSync(path, 'utf8');
-      assert.match(config, /"HOSTED_EXECUTION_ENABLED": "false"/);
-      assert.match(config, /"HOSTED_SCHEDULE_ENABLED": "false"/);
-      assert.doesNotMatch(config, /"(?:crons|workflows)"\s*:/);
+      assert.match(config, path === 'wrangler.hosted.jsonc'
+        ? /"HOSTED_EXECUTION_ENABLED": "false"/ : /"HOSTED_EXECUTION_ENABLED": "true"/);
+      if (path === 'wrangler.hosted.jsonc') {
+        assert.match(config, /"HOSTED_SCHEDULE_ENABLED": "false"/);
+        assert.doesNotMatch(config, /"crons"\s*:\s*\[\s*"/);
+        assert.doesNotMatch(config, /"workflows"\s*:/);
+      } else {
+        assert.match(config, /"HOSTED_SCHEDULE_ENABLED": "true"/);
+        assert.match(config, /"crons"\s*:\s*\["0 10,11 \* \* 1-5"\]/);
+      }
     }
   } finally { await fixture.close(); }
 });

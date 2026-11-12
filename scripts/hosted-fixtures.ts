@@ -22,6 +22,7 @@ import { provisionUser, type ReadingMetadata } from '../src/hosted/reading-store
 import type { HostedEnv } from '../src/hosted/app.ts';
 import { initializeSavedConfig } from '../src/hosted/saved-inputs.ts';
 import { prepareHostedAssets } from './hosted-assets.ts';
+import { uiText, uiHtml } from '../src/ui-text.ts';
 
 /** Fixture setup expects a snapshot, not a blocked/unchanged admission. */
 export async function freezeFixtureInputs(...args: Parameters<typeof freezeGenerationInputs>) {
@@ -51,10 +52,10 @@ export async function fixtureAccess() {
         response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ keys: [jwk] }));
       } else if (url.pathname === '/login' && publicOrigin) {
         const email = url.searchParams.get('email');
-        if (email && !FIXTURE_EMAILS.includes(email)) { response.writeHead(403).end('Not invited'); return; }
+        if (email && !FIXTURE_EMAILS.includes(email)) { response.writeHead(403).end(uiText('preview.not_invited')); return; }
         if (!email) {
           response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }).end(
-            '<!doctype html><title>Local fixture login</title><h1>Local fixture login — not Cloudflare</h1><p>No email is sent. Choose an example account:</p>' +
+            `<!doctype html><title>${uiHtml('preview.login_title')}</title><h1>${uiHtml('preview.login_heading')}</h1><p>${uiHtml('preview.login_guidance')}</p>` +
             FIXTURE_EMAILS.map(address => `<p><a href="/login?email=${encodeURIComponent(address)}">${address}</a></p>`).join(''));
         } else {
           response.writeHead(303, {
@@ -65,8 +66,8 @@ export async function fixtureAccess() {
         }
       } else if (url.pathname === '/cdn-cgi/access/logout' && publicOrigin) {
         response.writeHead(303, { 'Set-Cookie': 'CF_Authorization=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0', Location: publicOrigin + '/', 'Cache-Control': 'no-store' }).end();
-      } else response.writeHead(404).end('Not found');
-    })().catch(() => { response.writeHead(500).end('Fixture request failed'); });
+      } else response.writeHead(404).end(uiText('errors.not_found'));
+    })().catch(() => { response.writeHead(500).end(uiText('preview.request_failed')); });
   });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -152,6 +153,7 @@ export async function startHostedFixture(testMain?: string, workflowClass?: stri
     const settings = { PUBLIC_ORIGIN: origin, ACCESS_ISSUER: access.issuer, ACCESS_AUDIENCE: FIXTURE_AUDIENCE };
     if (testMain) return { config: {
       name: 'ruminator-test', main: resolve(testMain), compatibility_date: '2026-01-01',
+      rules: [{ type: 'Text' as const, globs: ['**/ui_text.toml'], fallthrough: true }],
       workers_dev: false, preview_urls: false, vars: { ...settings,
         ...(workflowClass ? { FIXTURE_HTML: readFileSync('test/fixtures/paper-unsectioned.html', 'utf8'),
           HOSTED_EXECUTION_ENABLED: 'true', HOSTED_SCHEDULE_ENABLED: 'false',

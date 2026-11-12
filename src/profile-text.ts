@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { DocumentError } from './document-error.ts';
+
 export interface Profile {
   id: string;
   title: string;
@@ -32,19 +34,19 @@ function bullets(text: string, heading: string): string[] {
 export function parseProfiles(markdown: string): Profile[] {
   const text = markdown.replace(/\r\n?/g, '\n').replace(/<!--[\s\S]*?-->/g, '');
   const sections = text.split(/^##[ \t]+/m).slice(1);
-  if (!sections.length) throw new Error('No research profiles; use ## Name {#stable-id} headings');
+  if (!sections.length) throw new DocumentError('no_profiles', 'No research profiles; use ## Name {#stable-id} headings');
   const seen = new Set<string>();
   const profiles = sections.map(section => {
     const heading = section.split('\n')[0].trim();
     const match = /^(.+?)\s+\{#([a-z0-9]+(?:-[a-z0-9]+)*)\}$/.exec(heading);
-    if (!match) throw new Error(`Profile heading needs a title and {#stable-id}: ${heading}`);
+    if (!match) throw new DocumentError('profile_heading', `Profile heading needs a title and {#stable-id}: ${heading}`, { heading });
     const [, title, id] = match;
-    if (seen.has(id)) throw new Error(`Duplicate profile ID: ${id}`);
+    if (seen.has(id)) throw new DocumentError('duplicate_profile', `Duplicate profile ID: ${id}`, { id });
     seen.add(id);
     const subjects = bullets(section, 'Subjects');
     const keywords = bullets(section, 'Keywords')
       .map(group => group.split(';').map(alias => alias.trim()).filter(Boolean).join('; ')).filter(Boolean);
-    if (!subjects.length) throw new Error(`Profile ${id} needs ### Subjects bullets`);
+    if (!subjects.length) throw new DocumentError('profile_subjects', `Profile ${id} needs ### Subjects bullets`, { id });
     return { id, title: title.trim(), subjects, keywords };
   });
   // Document order is for editing convenience, not a hidden ranking preference.

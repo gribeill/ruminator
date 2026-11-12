@@ -1,0 +1,239 @@
+# Browser-visible copy for the local and hosted readers. Edit here, restart local
+# processes, and rebuild/redeploy the Worker to apply changes. No online editor.
+# Values are plain text, NOT HTML or Markdown; markup is escaped, not executed.
+# Keep section/key names. CLI output, logs, paper content, saved documents and
+# third-party parser details are data, not page copy. Validation guidance below
+# is browser-only; editing it does not change CLI diagnostics.
+#
+# Dynamic values use {name}. Only the following entries accept placeholders:
+# shared.page_title: title (page name), app_name (shared.name)
+# footer.copyright: year (current year)
+# reading.title: app_name, date (actual announcement date)
+# reading.paper_count, reading.other_postings: count (number of papers)
+# reading.arxiv: id (base arXiv ID)
+# summary.unavailable: reason (one of the summary labels below)
+# editor.saved_revision, editor.base_revision, editor.published,
+# editor.working, editor.working_summary: revision (saved/applied/frozen revision)
+# editor.published_config: revision (ranking), summary_revision (summary settings)
+# controls.summary_description: input_limit (per-user estimated input allowance)
+# controls.limits: model (saved summary model), input_limit, completion_limit
+# populate.description: categories (configured category names)
+# populate.limits: model, input_limit (independently enforced for each user)
+# status.utc_time: time (ISO UTC timestamp)
+# status.failure: date (intended run date), reason (failure label below)
+# status.pending, status.unchanged, status.completed: date (intended run date)
+# status.shared: date, message (shared-pass status label below)
+# validation.profile_heading: heading (submitted heading)
+# validation.duplicate_profile, validation.profile_subjects: id (profile ID)
+# validation.missing_table, validation.unknown_key, validation.missing_key:
+#   path (configuration table/key)
+# validation.embedding: key (embedding setting)
+# validation.syntax: detail (third-party TOML parser's generated diagnostic)
+# Literal {#stable-id} is Markdown syntax, not a substitution slot.
+#
+# Placeholders are substituted once: braces in dynamic data remain literal.
+# Values cannot insert markup. HTML structure, links, controls, CSRF tokens and
+# scientific rendering stay in code. Removing a placeholder is allowed; adding
+# an unsupported one fails validation rather than silently displaying bad copy.
+
+[shared]
+name = "ruminator"
+page_title = "{title} · {app_name}"
+
+[navigation]
+account = "Account"
+login = "Login"
+logout = "Logout"
+interests = "Interests"
+admin = "Admin"
+digest = "Digest"
+
+[footer]
+copyright = "© Guilhem Ribeill {year}"
+github = "GitHub"
+
+[reading]
+title = "{app_name} · {date}"
+announcement = "Announcement:"
+paper_count = "{count} papers"
+featured = "Featured papers"
+random = "Random picks"
+other_postings = "Other postings ({count})"
+empty = "No new papers in this announcement batch."
+abstract = "Abstract"
+summary = "AI summary"
+pdf = "PDF"
+arxiv = "arXiv:{id}"
+authors_unavailable = "Authors unavailable"
+combined_score = "Combined relevance"
+semantic_score = "Semantic similarity"
+selected = "Selected"
+adjacent = "Adjacent"
+wildcard = "Wildcard"
+public_title = "Public listing"
+public_waiting = "No listing has been published yet."
+reader_title = "Your reader"
+reader_waiting = "Your listing will be prepared at the next scheduled update. You can review your default interests in the meantime."
+
+[votes]
+more = "More relevant"
+less = "Less relevant"
+more_tooltip = "More relevant to my interests"
+less_tooltip = "Less relevant to my interests"
+clear_up = "Clear upvote"
+clear_down = "Clear downvote"
+up_symbol = "+"
+down_symbol = "−"
+guidance = "Use + / − to affect future recommendations."
+
+[summary]
+unavailable = "Summary unavailable: {reason}"
+not_generated = "not generated"
+html_unavailable = "HTML unavailable"
+api_unavailable = "API unavailable"
+token_budget = "exhausted token budget"
+summarization_error = "summarization error"
+
+[errors]
+unexpected_origin = "Unexpected application origin"
+invalid_origin = "Invalid origin"
+reading_only = "Reading only"
+not_found = "Not found"
+login_title = "Log in"
+login_required = "A valid invited-user session is required."
+account_unavailable = "Account disabled or identity requires operator review"
+admin_required = "Admin access required"
+vote_form_expected = "Expected a vote form"
+vote_form_large = "Vote form could not be read or is too large"
+vote_form_invalid = "Invalid vote form"
+vote_form_stale = "Invalid or outdated form; reload your reader"
+vote_listing_stale = "Listing changed or account unavailable; reload your reader"
+operation_unavailable = "This operation is not available"
+hosted_failed = "Hosted request failed"
+hosted_configuration = "Hosted application is not configured"
+reading_changed = "Listing changed while loading; please retry"
+
+[local]
+loopback_required = "Loopback host required"
+vote_form_stale = "Invalid or outdated form token. Reload / for the current listing."
+invalid_vote = "Invalid paper or vote"
+no_publication = "No published listing; run generate first"
+request_failed = "Local request failed"
+
+[editor]
+interests_title = "Your interests"
+config_title = "Admin configuration"
+interests_label = "Interests (Markdown)"
+config_label = "Hosted configuration (TOML)"
+guidance = "Save changes for the next new generation."
+config_guidance = "These settings apply globally, on each user’s next new generation. Status below describes your own listing."
+interests_guidance = "Keep the Markdown profile headings and stable IDs. Edit subjects and keywords directly."
+revision_label = "Saved and applied revisions"
+saved_revision = "Saved revision {revision}."
+base_revision = "Editor base revision {revision}."
+unrecorded_revision = "The current listing has no recorded applied revision."
+published_config = "Your current ranking uses revision {revision}; summaries use revision {summary_revision}."
+published = "Your current listing uses revision {revision}."
+not_working = "No generation is currently working."
+working = "The working generation is frozen at revision {revision}."
+working_summary = "Summary settings use revision {revision}."
+applied = "The saved revision is applied to your current listing."
+pending = "The saved revision is pending for a future publication."
+size = "Maximum document size: 64 KiB UTF-8."
+save = "Save"
+open_latest = "Open latest saved version in a new tab"
+open_latest_note = "(does not replace the text above)."
+document_unavailable = "The saved document is unavailable. An operator must initialize configuration or review account permissions."
+form_expected = "Expected an editor form."
+form_large = "The form could not be read or exceeds the transport limit. Your browser may retain it when you go back."
+form_invalid = "Invalid editor form."
+form_stale = "Invalid or outdated session/form. Open the editor again after logging in."
+conflict = "A newer revision was saved. Your submission is preserved below. Open the latest saved version in a new tab and reconcile your edits there; this form still targets its original revision."
+forbidden = "Saving is no longer permitted. Your submission is preserved below; no changes were saved."
+
+[controls]
+title = "Generation controls"
+disabled = "Execution is not enabled on this installation."
+execution_disabled = "Execution is not enabled."
+publication_required = "Generation controls require a completed publication with frozen posting inputs."
+busy = "Generation controls are unavailable while your previous work is unfinished. No cancellation or takeover is performed."
+rebuild = "Rebuild ranking"
+summaries = "Regenerate six featured summaries"
+rebuild_description = "Use the current posting batch and latest saved interests/configuration. No new posting feed is fetched."
+summary_description = "Keep the published ranking, order and ranking inputs. Use the latest saved summary model, tokenizer settings and limits. Bypass summary cache hits for all six featured papers (or all featured papers if fewer). A fresh per-run allowance of {input_limit} estimated input tokens applies; paper/context limits still apply. Missing text or provider failures may leave summaries unavailable."
+consent = "I authorize the potential paid calls for my own/public listing."
+guidance = "Separate from Save. Only your listing is affected; the previous publication stays readable until replacement. Only saved settings are used. Token estimates are not dollar limits."
+limits = "Summary model: {model}. Per-run estimated input allowance: {input_limit}; per-paper completion allowance: {completion_limit} tokens."
+form_expected = "Expected a confirmation form."
+form_large = "Confirmation form is too large."
+consent_required = "Explicit paid-call confirmation is required."
+form_invalid = "Invalid confirmation/session."
+conflict = "Publication, settings or run status changed, or work is unfinished. Reload Admin and confirm again."
+launch_failed = "Preparation or launch could not be confirmed. Reload Admin for the recorded status. No automatic replacement will be started."
+
+[populate]
+title = "Populate feed"
+busy = "A shared ingestion pass is unfinished. Populate feed is unavailable."
+description = "Fetch the latest {categories} announcements once, then rank and request full text and AI summaries for up to six featured papers for each enabled user. Older announcement dates are accepted. Empty feeds reuse the latest matching retained nonempty batch; without one, existing listings stay unchanged. Already published batches are not rebuilt. Unfinished user work is not replaced."
+limits = "Model: {model}. Each user has an independent allowance of {input_limit} estimated input tokens. Cache hits are reused; unavailable text or limits may prevent summaries."
+consent = "I authorize potential paid embedding and summary calls for all enabled users within their saved limits."
+consent_required = "Explicit cohort paid-call confirmation is required."
+conflict = "Settings or shared pass changed, or ingestion is unfinished. Reload Admin and confirm again."
+failed = "Population did not complete. Check the shared pass status and ingestion diagnostics. No automatic retry was started."
+no_batch = "The current feed is empty and no matching nonempty batch is retained. Existing listings are unchanged; no generation or model calls were started. Historical announcements are not fetched from another source."
+return_admin = "Return to Admin"
+
+[status]
+label = "Generation status"
+last_success = "Last successful run:"
+utc_time = "{time} (UTC)"
+no_success = "No successful hosted run has been recorded."
+no_run = "No daily run has been admitted yet."
+failure = "Latest run ({date}) encountered a failure: {reason}."
+preserved = "The published reading, if any, is unchanged."
+intervention = "It remains pending until intervention or the next weekday boundary."
+pending = "Latest run ({date}) is pending or in progress; it has not succeeded yet."
+unchanged = "Latest daily check ({date}) found no new posting batch."
+completed = "Latest run ({date}) completed successfully."
+preparation = "input preparation failed"
+launch = "Workflow launch failed or could not be confirmed"
+run = "generation failed"
+deadline = "the next weekday boundary was reached"
+waiting = "shared-work waiting was exhausted"
+disabled = "the account was disabled"
+shared = "Shared weekday check ({date}): {message}."
+shared_running = "admission pass pending or interrupted; no automatic retry"
+shared_complete = "admission pass complete; individual generations finish independently"
+shared_feed_failed = "feed ingestion failed; no users were admitted by this pass"
+shared_failed = "scheduled pass failed; no automatic retry"
+unavailable = "unavailable"
+
+[validation]
+no_profiles = "No research profiles; use ## Name {#stable-id} headings"
+profile_heading = "Profile heading needs a title and {#stable-id}: {heading}"
+duplicate_profile = "Duplicate profile ID: {id}"
+profile_subjects = "Profile {id} needs ### Subjects bullets"
+summary_limits = "Summary limits must be positive safe integers with context larger than completion allowance"
+tokenizer_implementation = "Only gpt-tokenizer with o200k_base is currently supported"
+tokenizer_limits = "Tokenizer multiplier must be >= 1 and overheads must be nonnegative safe integers"
+missing_table = "Missing configuration table: {path}"
+unknown_key = "Unknown configuration key: {path}"
+missing_key = "Missing configuration key: {path}"
+categories = "ingestion.categories must contain 1–8 arXiv category names"
+category_list = "Use comma-separated arXiv categories, e.g. quant-ph,cs.ET"
+provider = "Changing LLM provider away from cloudflare is not yet supported"
+model = "llm.model must be a nonempty model ID"
+embedding = "Changing embedding configuration is not yet supported: {key}"
+weights = "scoring.weights must be nonnegative finite numbers summing to 1"
+feedback = "feedback thresholds must satisfy 0 <= min_similarity < 1 and min_similarity <= near_duplicate_similarity <= 1"
+document_large = "Document exceeds 64 KiB"
+document_revision = "Invalid document revision"
+syntax = "{detail}"
+invalid = "Invalid document"
+
+[preview]
+login_title = "Local fixture login"
+login_heading = "Local fixture login — not Cloudflare"
+login_guidance = "No email is sent. Choose an example account:"
+not_invited = "Not invited"
+request_failed = "Fixture request failed"

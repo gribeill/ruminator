@@ -70,7 +70,7 @@ export function workersAiEmbeddings(accountId: string, token: string, fetcher: t
     validateEmbeddingBatch(texts);
     try {
       const response = await fetcher(`https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${HOSTED_BGE_MODEL}`, {
-        method: 'POST', redirect: 'error', signal: AbortSignal.timeout(EMBEDDING_REQUEST_TIMEOUT_MS),
+        method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(EMBEDDING_REQUEST_TIMEOUT_MS),
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: texts, pooling: 'cls' }),
       });

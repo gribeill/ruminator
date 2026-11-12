@@ -1,9 +1,9 @@
 // Copyright 2026 Guilhem Ribeill
 // SPDX-License-Identifier: Apache-2.0
 
-// LOCAL TEST ENTRY ONLY. No execution HTTP route, credentials or live inference.
+// LOCAL TEST ENTRY ONLY. Recorded feeds and synthetic inference; no live transport.
 import app from '../src/hosted/worker.ts';
-import type { HostedEnv } from '../src/hosted/app.ts';
+import { createHostedApp, type HostedEnv } from '../src/hosted/app.ts';
 import { HostedGenerationWorkflow } from '../src/hosted/generation-workflow.ts';
 import type { GenerationAdapterContext } from '../src/hosted/ranking-runner.ts';
 import type { Paper } from '../src/arxiv.ts';
@@ -52,18 +52,26 @@ export class FixtureGenerationWorkflow extends HostedGenerationWorkflow<HostedEn
     return result;
   }
 }
+function feedTransport(env: HostedEnv): typeof fetch {
+  return async input => {
+    const category = decodeURIComponent(new URL(String(input)).pathname.split('/').at(-1)!);
+    const row = await env.DB.prepare('UPDATE fixture_feeds SET calls = calls + 1 WHERE category = ? RETURNING xml, status')
+      .bind(category).first<{ xml: string; status: number }>();
+    if (!row) throw new Error('Unrecorded fixture feed');
+    return new Response(row.xml, { status: row.status });
+  };
+}
+let fixtureApp: ReturnType<typeof createHostedApp> | undefined;
 export default {
   ...app,
+  async fetch(request: Request, env: HostedEnv) {
+    fixtureApp ??= createHostedApp(env, feedTransport(env));
+    return fixtureApp(request);
+  },
   // Only test code installs this handler. Feed responses and time are recorded
   // fixtures, and the Workflow class above cannot make live model calls.
   async scheduled(event: ScheduledController, env: HostedEnv) {
     if (!env.GENERATION) throw new Error('Missing fixture Workflow');
-    await runScheduledPass(env.DB, env.GENERATION, event.scheduledTime, async input => {
-      const category = decodeURIComponent(new URL(String(input)).pathname.split('/').at(-1)!);
-      const row = await env.DB.prepare('UPDATE fixture_feeds SET calls = calls + 1 WHERE category = ? RETURNING xml, status')
-        .bind(category).first<{ xml: string; status: number }>();
-      if (!row) throw new Error('Unrecorded fixture feed');
-      return new Response(row.xml, { status: row.status });
-    }, () => new Date(event.scheduledTime));
+    await runScheduledPass(env.DB, env.GENERATION, event.scheduledTime, feedTransport(env), () => new Date(event.scheduledTime));
   },
 };

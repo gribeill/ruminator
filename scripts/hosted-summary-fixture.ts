@@ -34,7 +34,7 @@ export default {
         credentials: { accountId: 'fixture-account', gatewayId: 'fixture-gateway', apiToken: 'fixture-token' },
         async fetcher(_url, init) {
           summaries++;
-          if (init?.redirect !== 'error' || new Headers(init.headers).get('cf-aig-max-attempts') !== '1') throw new Error('Unsafe fixture transport');
+          if (init?.redirect !== 'manual' || new Headers(init.headers).get('cf-aig-max-attempts') !== '1') throw new Error('Unsafe fixture transport');
           const body = JSON.parse(String(init.body)); models.push(body.model);
           return Response.json({ model: body.model, usage: { prompt_tokens: 42, completion_tokens: 20 },
             choices: [{ finish_reason: 'stop', message: { content: invalid ? '界'.repeat(3000) :

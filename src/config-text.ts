@@ -15,6 +15,7 @@
  */
 
 import { parse } from 'smol-toml';
+import { DocumentError } from './document-error.ts';
 import { categoriesFrom } from './arxiv.ts';
 import { BGE_CONFIG } from './bge-config.ts';
 import { validateWeights, type ScoreWeights } from './ranking.ts';
@@ -38,7 +39,7 @@ export interface SummaryLimits {
 export function validateSummaryLimits(limits: SummaryLimits): void {
   if (Object.values(limits).some(v => !Number.isSafeInteger(v) || v <= 0) ||
       limits.context_tokens <= limits.max_completion_tokens) {
-    throw new Error('Summary limits must be positive safe integers with context larger than completion allowance');
+    throw new DocumentError('summary_limits', 'Summary limits must be positive safe integers with context larger than completion allowance');
   }
 }
 
@@ -54,12 +55,12 @@ export interface Config {
 
 export function validateTokenizer(config: TokenizerConfig): void {
   if (config.implementation !== 'gpt-tokenizer' || config.encoding !== 'o200k_base') {
-    throw new Error('Only gpt-tokenizer with o200k_base is currently supported');
+    throw new DocumentError('tokenizer_implementation', 'Only gpt-tokenizer with o200k_base is currently supported');
   }
   if (!Number.isFinite(config.safety_multiplier) || config.safety_multiplier < 1 ||
       !Number.isSafeInteger(config.message_overhead) || config.message_overhead < 0 ||
       !Number.isSafeInteger(config.request_overhead) || config.request_overhead < 0) {
-    throw new Error('Tokenizer multiplier must be >= 1 and overheads must be nonnegative safe integers');
+    throw new DocumentError('tokenizer_limits', 'Tokenizer multiplier must be >= 1 and overheads must be nonnegative safe integers');
   }
 }
 
@@ -67,10 +68,10 @@ export function validateTokenizer(config: TokenizerConfig): void {
 export function parseConfig(text: string): Config {
   const raw = parse(text);
   function table(value: unknown, keys: string[], path: string): Record<string, unknown> {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`Missing configuration table: ${path}`);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new DocumentError('missing_table', `Missing configuration table: ${path}`, { path });
     const record = value as Record<string, unknown>;
-    for (const key of Object.keys(record)) if (!keys.includes(key)) throw new Error(`Unknown configuration key: ${path}.${key}`);
-    for (const key of keys) if (!(key in record)) throw new Error(`Missing configuration key: ${path}.${key}`);
+    for (const key of Object.keys(record)) if (!keys.includes(key)) throw new DocumentError('unknown_key', `Unknown configuration key: ${path}.${key}`, { path: `${path}.${key}` });
+    for (const key of keys) if (!(key in record)) throw new DocumentError('missing_key', `Missing configuration key: ${path}.${key}`, { path: `${path}.${key}` });
     return record;
   }
   if (!('ingestion' in raw)) raw.ingestion = { categories: ['quant-ph'] };
@@ -78,15 +79,15 @@ export function parseConfig(text: string): Config {
   const ingestion = table(raw.ingestion, ['categories'], 'ingestion');
   if (!Array.isArray(ingestion.categories) || !ingestion.categories.length || ingestion.categories.length > 8 ||
       ingestion.categories.some(c => typeof c !== 'string' || categoriesFrom(c).length !== 1 || categoriesFrom(c)[0] !== c)) {
-    throw new Error('ingestion.categories must contain 1–8 arXiv category names');
+    throw new DocumentError('categories', 'ingestion.categories must contain 1–8 arXiv category names');
   }
   const categories = categoriesFrom(ingestion.categories.join(','));
   const llm = table(raw.llm, ['provider', 'model'], 'llm');
-  if (llm.provider !== 'cloudflare') throw new Error('Changing LLM provider away from cloudflare is not yet supported');
-  if (typeof llm.model !== 'string' || !llm.model.trim()) throw new Error('llm.model must be a nonempty model ID');
+  if (llm.provider !== 'cloudflare') throw new DocumentError('provider', 'Changing LLM provider away from cloudflare is not yet supported');
+  if (typeof llm.model !== 'string' || !llm.model.trim()) throw new DocumentError('model', 'llm.model must be a nonempty model ID');
   const embedding = table(raw.embedding, Object.keys(BGE_CONFIG), 'embedding');
   for (const key of Object.keys(BGE_CONFIG) as (keyof typeof BGE_CONFIG)[]) {
-    if (embedding[key] !== BGE_CONFIG[key]) throw new Error(`Changing embedding configuration is not yet supported: ${key}`);
+    if (embedding[key] !== BGE_CONFIG[key]) throw new DocumentError('embedding', `Changing embedding configuration is not yet supported: ${key}`, { key });
   }
   const scoring = table(raw.scoring, ['weights'], 'scoring');
   const weights = table(scoring.weights, ['semantic', 'keywords', 'feedback'], 'scoring.weights') as unknown as ScoreWeights;

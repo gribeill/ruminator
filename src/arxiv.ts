@@ -16,6 +16,7 @@
 
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
 import { readResponseText } from './http-body.ts';
+import { DocumentError } from './document-error.ts';
 
 export const MAX_RSS_BYTES = 8 * 1024 * 1024;
 
@@ -39,7 +40,7 @@ export interface Batch {
 export function categoriesFrom(value: string): string[] {
   const categories = [...new Set(value.split(',').map(c => c.trim()))].sort();
   if (!categories.length || categories.some(c => !/^[a-z][a-z0-9-]*(?:\.[A-Za-z][A-Za-z0-9-]*)?$/.test(c))) {
-    throw new Error('Use comma-separated arXiv categories, e.g. quant-ph,cs.ET');
+    throw new DocumentError('category_list', 'Use comma-separated arXiv categories, e.g. quant-ph,cs.ET');
   }
   return categories;
 }

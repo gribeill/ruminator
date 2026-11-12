@@ -48,7 +48,9 @@ export function createCloudflareSummaryProvider(config: SummaryConfig, {
       let response: Response;
       try {
         response = await fetcher(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/v1/chat/completions`, {
-          method: 'POST', redirect: 'error',
+          // Workers does not support redirect:'error'. Reject returned 3xx below,
+          // without forwarding credentials/body or attempting a second request.
+          method: 'POST', redirect: 'manual',
           headers: {
             Authorization: `Bearer ${apiToken}`,
             'cf-aig-gateway-id': gatewayId,

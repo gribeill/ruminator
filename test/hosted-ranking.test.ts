@@ -45,6 +45,7 @@ test('packaged tokenizer hashes, token bounds, CLS validation, and a single-atte
     assert.deepEqual(JSON.parse(raw), { text: ['Hello world'], pooling: 'cls' });
     assert.equal(req.headers.authorization, 'Bearer fixture-token');
     if (mode === 'http') { res.writeHead(503).end('provider-secret-must-not-escape'); return; }
+    if (mode === 'redirect') { res.writeHead(307, { Location: '/redirected' }).end(); return; }
     res.setHeader('Content-Type', 'application/json');
     res.end(mode === 'large' ? 'x'.repeat(1024 * 1024 + 1) : JSON.stringify({ success: true, result: response(1) }));
   });
@@ -52,15 +53,15 @@ test('packaged tokenizer hashes, token bounds, CLS validation, and a single-atte
   try {
     const transport = workersAiEmbeddings('a'.repeat(32), 'fixture-token', async (url, init) => {
       assert.match(String(url), /\/ai\/run\/@cf\/baai\/bge-small-en-v1\.5$/);
-      assert.equal(init!.redirect, 'error'); assert.ok(init!.signal);
+      assert.equal(init!.redirect, 'manual'); assert.ok(init!.signal);
       return fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}`, init);
     });
     assert.deepEqual(await transport(['Hello world']), response(1));
-    for (mode of ['http', 'large']) await assert.rejects(transport(['Hello world']), /^Error: Workers AI embedding request failed; do not retry this attempt$/);
-    assert.equal(calls, 3);
+    for (mode of ['http', 'large', 'redirect']) await assert.rejects(transport(['Hello world']), /^Error: Workers AI embedding request failed; do not retry this attempt$/);
+    assert.equal(calls, 4); // The redirect is rejected after one request, never followed.
     await assert.rejects(transport(Array(9).fill('Hello world')), /batch\/token/);
     await assert.rejects(transport(['x'.repeat(1024 * 1024)]), /byte limits/);
-    assert.equal(calls, 3);
+    assert.equal(calls, 4);
   } finally { server.close(); await once(server, 'close'); }
 });
 

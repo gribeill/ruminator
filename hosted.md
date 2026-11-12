@@ -1,6 +1,6 @@
 # Hosted reader: local implementation and deployment
 
-The hosted version is under development. The local implementation supports public reading, invited-user identity, private reading/voting, account provisioning, and plain-text interests/admin configuration editors. Internal ranking/summary execution, minimal Workflow wiring, confirmed admin controls, and weekday shared-ingestion/admission are implemented locally and tested with recorded sources and fixture inference only. No live hosted ingestion/model calls, production execution controls, or schedules are enabled. The editors and recent schema/execution changes have not been deployed to production.
+The hosted version is under development. Public/private reading, Access authentication, interests/configuration editors, per-user generation Workflows and confirmed admin controls are deployed. Manual execution and the explicitly authorized Monday–Friday 06:00 America/New_York schedule are enabled, observing DST. The cron supplies 10:00/11:00 UTC candidates; the application admits only the Eastern 06:00 event. The first scheduled attempt failed during ingestion before any generation or inference. Live model behavior and initial publication still need verification; older implementation/deployment notes below are historical where superseded by this status and `.agents/PLAN.md`.
 
 Production adapter composition is implemented locally behind explicit execution
 and schedule switches, both off by default. See [hosted-readiness.md](hosted-readiness.md)
@@ -39,9 +39,16 @@ Stop with Ctrl-C. Preview accounts, votes, saved document edits, and signing key
 | `/reader` | Signed-in user's saved listing and voting forms, or a waiting message. |
 | `/reader/vote` | Authenticated, origin/CSRF-checked POST for a paper in that user's current publication. |
 | `/interests` | Authenticated GET/HEAD Markdown editor and revision/CSRF-checked POST save for the user's own interests. |
-| `/admin` | Admin-only GET/HEAD TOML editor and revision/CSRF-checked POST save for global settings. |
+| `/admin` | Admin-only GET/HEAD TOML editor, explicit execution controls, and revision/CSRF-checked POST save for global settings. |
+| `/admin/populate` | Admin-only paid-confirmed POST: fetch announcements once and launch ranking/full-text/summary Workflows for all enabled users. |
 
-The default preview and production configurations keep execution/scheduling switches false and still have no Workflow binding or cron. They display execution as unavailable and reject execution POSTs. Only the local Workflow fixture enables the confirmed admin controls described below; visiting a page or saving a document never starts inference.
+Local preview keeps execution off and has no Workflow binding or cron. Production enables explicit admin actions and weekday 06:00 America/New_York generation for all enabled users, within their independent saved limits. Scheduling is standing authorization for potentially paid inference; it observes DST and remains deduplicated by intended date. Visiting a page or saving a document never starts inference.
+
+### Populate feed
+
+On `/admin`, review **Populate feed**, check the paid-call consent for **all enabled users**, then submit. This works before first publication. Feed fetching/admission completes before the response; each user's generation continues independently in its Workflow, with saved inputs and independent token limits. Up to six featured papers per user receive full-text retrieval and summary attempts; missing HTML or limits can leave summaries unavailable. Other users' private status is not exposed to the admin.
+
+The announcement date need not match today. A valid empty feed reuses the latest matching nonempty batch retained by current/working hosted snapshots. If none exists, a message explains that no generation was started and existing publications stay unchanged. There is no historical-feed backfill. Mixed/future/regressed feeds still fail safely. Already published batches are no-ops; unfinished work is skipped rather than cancelled or taken over. Replayed forms cannot fetch or launch again. A fresh explicit confirmation is required for another pass after ingestion failure. Own-listing **Rebuild ranking** and **Regenerate summaries** remain separate controls.
 
 ## Identity and data
 

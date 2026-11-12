@@ -14,8 +14,11 @@ import { embeddingHash } from '../src/hosted/embedding-requests.ts';
 type Env = HostedEnv & { FIXTURE_HTML: string };
 function transport(env: Env): typeof fetch {
   return async (input, init) => {
-    const url = new URL(String(input)), headers = new Headers(init?.headers);
-    if (init?.redirect !== 'error' || !init.signal) throw new Error('Missing transport bounds');
+    // Validate with the actual workerd Request constructor before returning a
+    // recording: plain fetch stubs otherwise hide unsupported request options.
+    const request = new Request(input, init);
+    const url = new URL(request.url), headers = request.headers;
+    if (request.redirect !== 'manual' || !init?.signal) throw new Error('Missing transport bounds');
     const kind = url.hostname === 'rss.arxiv.org' ? 'feed' : url.hostname === 'arxiv.org' ? 'html'
       : url.hostname === 'api.cloudflare.com' && url.pathname.endsWith('/chat/completions') ? 'summary'
       : url.hostname === 'api.cloudflare.com' && url.pathname.includes('/ai/run/') ? 'embedding' : undefined;

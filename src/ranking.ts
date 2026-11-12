@@ -15,6 +15,7 @@
  */
 
 import type { Paper } from './arxiv.ts';
+import { DocumentError } from './document-error.ts';
 import { seededRandom, type Digest } from './digest.ts';
 import type { Profile } from './profile-text.ts';
 import type { SemanticScores } from './semantic-types.ts';
@@ -33,7 +34,7 @@ export function validateWeights(weights: ScoreWeights): void {
   const values = [weights.semantic, weights.keywords, weights.feedback];
   if (values.some(v => typeof v !== 'number' || !Number.isFinite(v) || v < 0) ||
       Math.abs(values.reduce((a, b) => a + b, 0) - 1) > 1e-9) {
-    throw new Error('scoring.weights must be nonnegative finite numbers summing to 1');
+    throw new DocumentError('weights', 'scoring.weights must be nonnegative finite numbers summing to 1');
   }
 }
 

@@ -65,6 +65,12 @@ Names and Subjects describe semantic interests. Keywords are optional explicit p
 
 **[config.toml](config.toml)** controls ranking weights and optional summary settings. Changes to interests and ranking settings affect future listings, not an already-published one. To try changes on the current batch, see [rebuilding a listing](commands.md#rebuild-the-current-batch).
 
+### Page wording
+
+Edit **[ui_text.toml](ui_text.toml)** to change browser-visible wording across the local reader, public/private hosted pages, and admin forms. It includes labels, guidance, tooltips, accessible names, statuses, and errors. The comment block documents each template's available `{values}`. Keep section/key names; values are plain text, not HTML or Markdown.
+
+Restart local processes after editing. Hosted changes require rebuilding and redeploying the Worker; there is no online editor or extra generation command. Run `npm test` before deploying. Copy edits do not change saved papers, ranking, summaries, budgets, permissions, or CLI messages.
+
 ## Optional AI summaries
 
 Summaries are off by default. Enabling them sends featured papers' available arXiv HTML text through Cloudflare AI Gateway and **may incur charges**. They supplement abstracts and papers, not replace reading them; summaries can be wrong and some papers have no usable HTML.

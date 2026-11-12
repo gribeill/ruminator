@@ -10,6 +10,8 @@ import { accessVerifier, authSettings, formToken, verifyFormToken } from './auth
 import { provisionUser, readPublicReading, readReading, readUserVotes, saveUserVote, ReadingUnavailableError, type User, type ReadingPublication } from './reading-store.ts';
 
 import { adminAction, adminControls } from './admin-controls.ts';
+import { populateFeed, populateFeedForm } from './populate-feed.ts';
+import { uiText, uiHtml } from '../ui-text.ts';
 import type { GenerationReference } from './daily-runs.ts';
 import { documentEditor } from './editors.ts';
 import { requireExecution, type ExecutionSettings } from './activation.ts';
@@ -27,23 +29,23 @@ interface ReplyOptions {
   html?: boolean;
   headers?: Record<string, string>;
 }
-const publicLinks: CowNavigation = { links: [{ href: '/login', label: 'Login' }] };
+const publicLinks: CowNavigation = { links: [{ href: '/login', label: uiText('navigation.login') }] };
 const privateLinks = (user: User): CowNavigation => ({ email: user.email, links: [
-  { href: '/logout', label: 'Logout' }, { href: '/interests', label: 'Interests' },
-  ...(user.role === 'admin' ? [{ href: '/admin', label: 'Admin' }] : []),
+  { href: '/logout', label: uiText('navigation.logout') }, { href: '/interests', label: uiText('navigation.interests') },
+  ...(user.role === 'admin' ? [{ href: '/admin', label: uiText('navigation.admin') }] : []),
 ] });
 
 function page(title: string, body: string, navigation: CowNavigation): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(title)} · ruminator</title><style>body{max-width:800px;margin:auto;padding:1em;line-height:1.5;font-family:Optima,Candara,Calibri,Arial,sans-serif}pre{white-space:pre-wrap;overflow-wrap:anywhere}textarea{display:block;box-sizing:border-box;width:100%;font:inherit;font-family:monospace}label{display:block}button{font:inherit}${brandStyles}${footerStyles}</style></head>
+<title>${uiHtml('shared.page_title', { title, app_name: uiText('shared.name') })}</title><style>body{max-width:800px;margin:auto;padding:1em;line-height:1.5;font-family:Optima,Candara,Calibri,Arial,sans-serif}pre{white-space:pre-wrap;overflow-wrap:anywhere}textarea{display:block;box-sizing:border-box;width:100%;font:inherit;font-family:monospace}label{display:block}button{font:inherit}${brandStyles}${footerStyles}</style></head>
 <body><header>${renderBrand(navigation)}</header>
 <main><h2>${escapeHtml(title)}</h2>${body}</main>${renderFooter()}</body></html>`;
 }
 
-/** Reading and authorized mutations. Execution controls require an explicitly
- * supplied Workflow binding; production/preview configurations do not enable it.
+/** Reading and authorized mutations. Execution controls require the explicit
+ * execution switch, valid credentials and a Workflow binding; GET never runs work.
  */
-export function createHostedApp(env: HostedEnv) {
+export function createHostedApp(env: HostedEnv, fetcher: typeof fetch = fetch) {
   const execution = () => {
     if (!env.GENERATION) return undefined;
     try { requireExecution(env); return env.GENERATION; } catch { return undefined; }
@@ -69,7 +71,9 @@ export function createHostedApp(env: HostedEnv) {
         'Content-Type': options.html ? 'text/html; charset=utf-8' : 'text/plain; charset=utf-8',
         'Cache-Control': options.publicPage ? 'public, max-age=0, must-revalidate' : 'private, no-store',
         ...(options.publicPage ? {} : { Vary: 'Cookie, Cf-Access-Jwt-Assertion' }),
-        'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
+        // no-referrer makes Chromium serialize form-POST Origin as null. Keep
+        // same-origin forms working without sending referrers to external sites.
+        'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'same-origin',
         'Content-Security-Policy': "default-src 'none'; style-src 'self' 'unsafe-inline'; font-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
         ...options.headers,
       },
@@ -78,7 +82,7 @@ export function createHostedApp(env: HostedEnv) {
       const url = new URL(request.url);
       // Request.url is the platform's routed origin; Host/forwarded headers can be
       // rewritten by proxies and must not select an identity provider or redirect.
-      if (url.origin !== settings.origin) return reply(403, 'Unexpected application origin');
+      if (url.origin !== settings.origin) return reply(403, uiText('errors.unexpected_origin'));
       const path = url.pathname;
       const read = ['GET', 'HEAD'].includes(request.method);
       if (/^\/assets\/katex\/(?:katex\.min\.css|fonts\/[A-Za-z0-9_.-]+\.(?:woff2?|ttf))$/.test(path) && read) {
@@ -89,10 +93,10 @@ export function createHostedApp(env: HostedEnv) {
         } });
       }
       if (path === '/') {
-        if (!read) return reply(405, 'Reading only', { headers: { Allow: 'GET, HEAD' } });
+        if (!read) return reply(405, uiText('errors.reading_only'), { headers: { Allow: 'GET, HEAD' } });
         // Deliberately ignore every login cookie/header here. Public output is always the admin's.
         const publication = await readPublicReading(env.DB);
-        return reply(200, head ? '' : publication ? renderer(publication)() : page('Public listing', '<p>No listing has been published yet.</p>', publicLinks), { publicPage: true, html: true });
+        return reply(200, head ? '' : publication ? renderer(publication)() : page(uiText('reading.public_title'), `<p>${uiHtml('reading.public_waiting')}</p>`, publicLinks), { publicPage: true, html: true });
       }
       if (['/login', '/logout'].includes(path) && read) {
         const destination = path === '/login'
@@ -101,53 +105,62 @@ export function createHostedApp(env: HostedEnv) {
         return reply(303, '', { headers: { Location: destination } });
       }
       const privateRoute = ['/reader', '/interests', '/admin'].some(prefix => path === prefix || path.startsWith(prefix + '/'));
-      if (!privateRoute) return reply(404, 'Not found');
-      if (request.method === 'POST' && request.headers.get('origin') !== settings.origin) return reply(403, 'Invalid origin');
+      if (!privateRoute) return reply(404, uiText('errors.not_found'));
+      if (request.method === 'POST' && request.headers.get('origin') !== settings.origin) return reply(403, uiText('errors.invalid_origin'));
       const identity = await verify(request);
-      if (!identity) return reply(401, page('Log in', '<p>A valid invited-user session is required.</p>', publicLinks), { html: true });
+      if (!identity) return reply(401, page(uiText('errors.login_title'), `<p>${uiHtml('errors.login_required')}</p>`, publicLinks), { html: true });
       const user = await provisionUser(env.DB, identity);
-      if (!user) return reply(403, 'Account disabled or identity requires operator review');
-      if ((path === '/admin' || path.startsWith('/admin/')) && user.role !== 'admin') return reply(403, 'Admin access required');
+      if (!user) return reply(403, uiText('errors.account_unavailable'));
+      if ((path === '/admin' || path.startsWith('/admin/')) && user.role !== 'admin') return reply(403, uiText('errors.admin_required'));
       if (path === '/reader/vote' && request.method === 'POST') {
-        if (!/^application\/x-www-form-urlencoded(?:;|$)/i.test(request.headers.get('content-type') ?? '')) return reply(415, 'Expected a vote form');
+        if (!/^application\/x-www-form-urlencoded(?:;|$)/i.test(request.headers.get('content-type') ?? '')) return reply(415, uiText('errors.vote_form_expected'));
         let form: URLSearchParams;
         try { form = new URLSearchParams(await readResponseText(request, 2048)); }
-        catch { return reply(413, 'Vote form could not be read or is too large'); }
+        catch { return reply(413, uiText('errors.vote_form_large')); }
         if ([...form.keys()].length !== 3 || ['paper', 'value', 'token'].some(key => form.getAll(key).length !== 1) ||
-            !['-1', '0', '1'].includes(form.get('value') ?? '')) return reply(400, 'Invalid vote form');
+            !['-1', '0', '1'].includes(form.get('value') ?? '')) return reply(400, uiText('errors.vote_form_invalid'));
         const publication = await readReading(env.DB, user.id); // Re-read after body arrival.
         if (!publication || !await verifyFormToken(form.get('token')!, user.csrf_secret, user.id, identity.session, publication.generationId)) {
-          return reply(403, 'Invalid or outdated form; reload your reader');
+          return reply(403, uiText('errors.vote_form_stale'));
         }
         if (!await saveUserVote(env.DB, user.id, publication.generationId, form.get('paper')!, Number(form.get('value')) as VoteValue)) {
-          return reply(409, 'Listing changed or account unavailable; reload your reader');
+          return reply(409, uiText('errors.vote_listing_stale'));
         }
         return reply(303, '', { headers: { Location: `/reader#${encodeURIComponent(paperAnchor(form.get('paper')!))}` } });
       }
+      if (path === '/admin/populate' && request.method === 'POST') {
+        const result = await populateFeed(request, env.DB, user, identity.session, execution(), (input, init) => {
+          requireExecution(env);
+          return fetcher(input, init);
+        });
+        return reply(result.status, result.location ? '' : page(uiText('populate.title'), result.body, privateLinks(user)),
+          { html: true, ...(result.location ? { headers: { Location: result.location } } : {}) });
+      }
       if ((path === '/admin/rebuild' || path === '/admin/summaries') && request.method === 'POST') {
         const result = await adminAction(request, env.DB, user, identity.session, path === '/admin/rebuild' ? 'rebuild' : 'summaries', execution());
-        return reply(result.status, result.location ? '' : page('Generation controls', result.body, privateLinks(user)),
+        return reply(result.status, result.location ? '' : page(uiText('controls.title'), result.body, privateLinks(user)),
           { html: true, ...(result.location ? { headers: { Location: result.location } } : {}) });
       }
       if ((path === '/interests' || path === '/admin') && (read || request.method === 'POST')) {
         const result = await documentEditor(request, env.DB, user, identity.session, path === '/interests' ? 'interests' : 'config');
-        const controls = path === '/admin' && read && !head ? await adminControls(env.DB, user, identity.session, !!execution()) : '';
-        return reply(result.status, result.location ? '' : page(path === '/interests' ? 'Your interests' : 'Admin configuration', result.body + controls, privateLinks(user)),
+        const controls = path === '/admin' && read && !head
+          ? (execution() ? await populateFeedForm(env.DB, user, identity.session) : '') + await adminControls(env.DB, user, identity.session, !!execution()) : '';
+        return reply(result.status, result.location ? '' : page(uiText(path === '/interests' ? 'editor.interests_title' : 'editor.config_title'), result.body + controls, privateLinks(user)),
           { html: true, ...(result.location ? { headers: { Location: result.location } } : {}) });
       }
-      if (!read) return reply(405, 'This operation is not available', { headers: { Allow: path === '/interests' || path === '/admin' ? 'GET, HEAD, POST' : 'GET, HEAD' } });
+      if (!read) return reply(405, uiText('errors.operation_unavailable'), { headers: { Allow: path === '/interests' || path === '/admin' ? 'GET, HEAD, POST' : 'GET, HEAD' } });
       if (path === '/reader') {
         const publication = await readReading(env.DB, user.id);
         if (head) return reply(200, '', { html: true });
         const body = publication ? renderer(publication, user)({ votes: await readUserVotes(env.DB, user.id),
           csrfToken: await formToken(user.csrf_secret, user.id, identity.session, publication.generationId), action: '/reader/vote' })
-          : page('Your reader', '<p>Your listing will be prepared at the next scheduled update. You can review your default interests in the meantime.</p>', privateLinks(user));
+          : page(uiText('reading.reader_title'), `<p>${uiHtml('reading.reader_waiting')}</p>`, privateLinks(user));
         return reply(200, body, { html: true });
       }
-      return reply(404, 'Not found');
+      return reply(404, uiText('errors.not_found'));
     } catch (error) {
-      if (error instanceof ReadingUnavailableError) return reply(503, error.message, { headers: { 'Retry-After': '1' } });
-      return reply(500, 'Hosted request failed'); // No JWTs, private paper text, or credentials in errors/logs.
+      if (error instanceof ReadingUnavailableError) return reply(503, uiText('errors.reading_changed'), { headers: { 'Retry-After': '1' } });
+      return reply(500, uiText('errors.hosted_failed')); // No JWTs, private paper text, or credentials in errors/logs.
     }
   };
 }

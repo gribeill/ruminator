@@ -10,6 +10,7 @@ import { HOSTED_BGE_FINGERPRINT } from './bge.ts';
 import { easternRunDate, nextWeekdayBoundary, type GenerationReference } from './daily-runs.ts';
 import { cleanupHostedState } from './retention.ts';
 import type { User } from './reading-store.ts';
+import { uiHtml } from '../ui-text.ts';
 
 type Action = 'rebuild' | 'summaries';
 type Launcher = Pick<Workflow<GenerationReference>, 'create'>;
@@ -29,23 +30,23 @@ async function state(db: D1Database, userId: string): Promise<ControlState | nul
 }
 
 export async function adminControls(db: D1Database, user: User, session: string, enabled: boolean): Promise<string> {
-  if (!enabled) return '<section><h3>Generation controls</h3><p>Execution is not enabled on this installation.</p></section>';
+  if (!enabled) return `<section><h3>${uiHtml('controls.title')}</h3><p>${uiHtml('controls.disabled')}</p></section>`;
   const s = await state(db, user.id);
-  if (!s) return '<p>Generation controls require a completed publication with frozen posting inputs.</p>';
-  if (s.busy) return '<p>Generation controls are unavailable while your previous work is unfinished. No cancellation or takeover is performed.</p>';
+  if (!s) return `<p>${uiHtml('controls.publication_required')}</p>`;
+  if (s.busy) return `<p>${uiHtml('controls.busy')}</p>`;
   const version = versionOf(s), config = parseConfig(s.saved_config), limits = config.summaries;
   const forms = await Promise.all((['rebuild', 'summaries'] as const).map(async action => {
-    const label = action === 'rebuild' ? 'Rebuild ranking' : 'Regenerate six featured summaries';
+    const label = uiHtml(action === 'rebuild' ? 'controls.rebuild' : 'controls.summaries');
     const description = action === 'rebuild'
-      ? 'Use the current posting batch and latest saved interests/configuration. Includes normal summaries with compatible cache reuse. New embeddings and cache-miss summaries may cost money. No new posting feed is fetched.'
-      : `Keep the published ranking, order and ranking inputs. Use the latest saved summary model, tokenizer settings and limits. Bypass summary cache hits for all six featured papers (or all featured papers if fewer). A fresh per-run allowance of ${limits.run_input_tokens} estimated input tokens applies; paper/context limits still apply. Missing text or provider failures may leave summaries unavailable.`;
+      ? uiHtml('controls.rebuild_description')
+      : uiHtml('controls.summary_description', { input_limit: limits.run_input_tokens });
     return `<form method="post" action="/admin/${action}"><h4>${label}</h4><p>${description}</p>
 <input type="hidden" name="version" value="${escapeHtml(version)}">
 <input type="hidden" name="token" value="${await formToken(user.csrf_secret, user.id, session, scope(action, version))}">
-<label><input type="checkbox" name="confirm" value="paid" required> I authorize the potential paid calls for my own/public listing. Previous spending is not refunded.</label>
+<label><input type="checkbox" name="confirm" value="paid" required> ${uiHtml('controls.consent')}</label>
 <button type="submit">${label}</button></form>`;
   }));
-  return `<section aria-label="Generation controls"><h3>Generation controls</h3><p>Separate from Save. Only your listing is affected; the previous publication stays readable until replacement. Only saved settings are used. Token estimates are not dollar limits.</p><p>Summary model: ${escapeHtml(config.llm.model)}. Per-run estimated input allowance: ${limits.run_input_tokens}; per-paper completion allowance: ${limits.max_completion_tokens} tokens.</p>${forms.join('')}</section>`;
+  return `<section aria-label="${uiHtml('controls.title')}"><h3>${uiHtml('controls.title')}</h3><p>${uiHtml('controls.guidance')}</p><p>${uiHtml('controls.limits', { model: config.llm.model, input_limit: limits.run_input_tokens, completion_limit: limits.max_completion_tokens })}</p>${forms.join('')}</section>`;
 }
 
 /** Authenticated admin + Origin checks are supplied by the app. The reservation
@@ -54,18 +55,18 @@ export async function adminControls(db: D1Database, user: User, session: string,
  */
 export async function adminAction(request: Request, db: D1Database, user: User, session: string,
   action: Action, launcher?: Launcher): Promise<{ status: number; body: string; location?: string }> {
-  if (!launcher) return { status: 503, body: '<p>Execution is not enabled.</p>' };
-  if (!/^application\/x-www-form-urlencoded(?:;|$)/i.test(request.headers.get('content-type') ?? '')) return { status: 415, body: '<p>Expected a confirmation form.</p>' };
+  if (!launcher) return { status: 503, body: `<p>${uiHtml('controls.execution_disabled')}</p>` };
+  if (!/^application\/x-www-form-urlencoded(?:;|$)/i.test(request.headers.get('content-type') ?? '')) return { status: 415, body: `<p>${uiHtml('controls.form_expected')}</p>` };
   let form: URLSearchParams;
   try { form = new URLSearchParams(await readResponseText(request, 8192)); }
-  catch { return { status: 413, body: '<p>Confirmation form is too large.</p>' }; }
+  catch { return { status: 413, body: `<p>${uiHtml('controls.form_large')}</p>` }; }
   if ([...form.keys()].length !== 3 || ['version', 'token', 'confirm'].some(k => form.getAll(k).length !== 1) || form.get('confirm') !== 'paid') {
-    return { status: 400, body: '<p>Explicit paid-call confirmation is required.</p>' };
+    return { status: 400, body: `<p>${uiHtml('controls.consent_required')}</p>` };
   }
   const version = form.get('version')!;
-  if (!await verifyFormToken(form.get('token')!, user.csrf_secret, user.id, session, scope(action, version))) return { status: 403, body: '<p>Invalid confirmation/session.</p>' };
+  if (!await verifyFormToken(form.get('token')!, user.csrf_secret, user.id, session, scope(action, version))) return { status: 403, body: `<p>${uiHtml('controls.form_invalid')}</p>` };
   const s = await state(db, user.id);
-  const conflict = { status: 409, body: '<p>Publication, settings or run status changed, or work is unfinished. Reload Admin and confirm again.</p>' };
+  const conflict = { status: 409, body: `<p>${uiHtml('controls.conflict')}</p>` };
   if (!s || s.busy || version !== versionOf(s)) return conflict;
   const id = crypto.randomUUID(), date = easternRunDate(new Date());
   const reserved = await db.prepare(`INSERT INTO generation_runs (user_id, run_date, generation_id, deadline)
@@ -82,7 +83,7 @@ export async function adminAction(request: Request, db: D1Database, user: User, 
   const failed = async (reason: 'preparation' | 'launch') => {
     await db.prepare('UPDATE generation_runs SET failure_reason = ? WHERE user_id = ? AND generation_id = ? AND finished_at IS NULL')
       .bind(reason, user.id, id).run();
-    return { status: 503, body: '<p>Preparation or launch could not be confirmed. Reload Admin for the recorded status. No automatic replacement will be started.</p>' };
+    return { status: 503, body: `<p>${uiHtml('controls.launch_failed')}</p>` };
   };
   try {
     // Copy the already published batch in D1. Rebuild freezes latest documents

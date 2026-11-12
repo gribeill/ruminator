@@ -22,6 +22,7 @@ import type { Paper } from './arxiv.ts';
 import type { Digest } from './digest.ts';
 import { paperAnchor, type Votes, type VoteValue } from './feedback.ts';
 import { createDigestRenderer } from './render.ts';
+import { uiText } from './ui-text.ts';
 import type { Publication } from './listing-store.ts';
 
 export interface VoteStore {
@@ -86,25 +87,25 @@ export function createDigestServer(source: Digest | (() => Publication | undefin
       const host = request.headers.host;
       // Prevent DNS rebinding from exposing local controls under an attacker hostname.
       if (!host || ![`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`].includes(host)) {
-        send(403, 'Loopback host required'); return;
+        send(403, uiText('local.loopback_required')); return;
       }
       const path = new URL(request.url ?? '/', 'http://localhost').pathname;
       if (path === '/vote' && request.method === 'POST' && votes) {
-        if (request.headers.origin && request.headers.origin !== `http://${host}`) { send(403, 'Invalid origin'); return; }
+        if (request.headers.origin && request.headers.origin !== `http://${host}`) { send(403, uiText('errors.invalid_origin')); return; }
         if (!/^application\/x-www-form-urlencoded(?:;|$)/i.test(request.headers['content-type'] ?? '')) {
-          send(415, 'Expected a vote form'); return;
+          send(415, uiText('errors.vote_form_expected')); return;
         }
         let form: URLSearchParams;
         try { form = await readForm(request); }
-        catch { send(413, 'Vote form could not be read or is too large'); return; }
+        catch { send(413, uiText('errors.vote_form_large')); return; }
         refresh(); // Publication may have changed while the request body was arriving.
-        if (form.get('token') !== csrfToken) { send(403, 'Invalid or outdated form token. Reload / for the current listing.'); return; }
+        if (form.get('token') !== csrfToken) { send(403, uiText('local.vote_form_stale')); return; }
         if ([...form.keys()].length !== 3 || ['paper', 'value', 'token'].some(key => form.getAll(key).length !== 1)) {
-          send(400, 'Invalid vote form'); return;
+          send(400, uiText('errors.vote_form_invalid')); return;
         }
         const paper = byId.get(form.get('paper') ?? '');
         const value = form.get('value');
-        if (!paper || !['-1', '0', '1'].includes(value ?? '')) { send(400, 'Invalid paper or vote'); return; }
+        if (!paper || !['-1', '0', '1'].includes(value ?? '')) { send(400, uiText('local.invalid_vote')); return; }
         votes.write(paper, Number(value) as VoteValue);
         response.writeHead(303, { Location: `/#${encodeURIComponent(paperAnchor(paper.id))}`, 'Cache-Control': 'no-store' });
         response.end();
@@ -120,10 +121,10 @@ export function createDigestServer(source: Digest | (() => Publication | undefin
         return;
       }
       if (path !== '/' || (request.method !== 'GET' && request.method !== 'HEAD')) {
-        send(404, 'Not found'); return;
+        send(404, uiText('errors.not_found')); return;
       }
       refresh();
-      if (!digest) { send(503, 'No published listing; run generate first'); return; }
+      if (!digest) { send(503, uiText('local.no_publication')); return; }
       response.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',
@@ -134,7 +135,7 @@ export function createDigestServer(source: Digest | (() => Publication | undefin
       response.end(request.method === 'HEAD' ? undefined
         : votes ? renderPage!({ votes: votes.read(), csrfToken }) : html);
     };
-    void handle().catch(() => { if (!response.headersSent) send(500, 'Local request failed'); else response.end(); });
+    void handle().catch(() => { if (!response.headersSent) send(500, uiText('local.request_failed')); else response.end(); });
   });
   return server;
 }

@@ -11,6 +11,9 @@ import { readGenerationInputs } from '../src/hosted/generation-inputs.ts';
 import { readSavedConfig, saveConfig } from '../src/hosted/saved-inputs.ts';
 import { adminRunStatus } from '../src/hosted/run-status.ts';
 import { parseConfig } from '../src/config-text.ts';
+import { extractArxivHtml } from '../src/html-extraction.ts';
+import { summaryMessages } from '../src/summary-content.ts';
+import { estimatePromptTokens } from '../src/tokenizer.ts';
 
 const xml = readFileSync('test/fixtures/quant-ph.xml', 'utf8');
 const timestamp = (date: string) => Date.parse(date + 'T11:00:00Z');
@@ -56,11 +59,12 @@ test('shared weekday pass uses real D1/Workflows with recorded feeds, no live tr
     return instance;
   } };
   const calls: string[] = [];
-  let bodyDate = '2026-11-09', bad: 'http' | 'xml' | 'mixed' | undefined, empty = false;
+  let bodyDate = '2026-11-09', bad: 'network' | 'http' | 'xml' | 'mixed' | undefined, empty = false;
   const transport: typeof fetch = async (input, init) => {
-    assert.equal(init?.redirect, 'error');
+    assert.equal(init?.redirect, 'manual');
     const category = decodeURIComponent(new URL(String(input)).pathname.split('/').at(-1)!);
     calls.push(category);
+    if (category === 'quant-ph' && bad === 'network') throw new Error('sensitive transport details');
     if (category === 'quant-ph' && bad === 'http') return new Response('recorded failure', { status: 503 });
     if (category === 'quant-ph' && bad === 'xml') return new Response('<not-rss>');
     return new Response(feed(category, category === 'quant-ph' && bad === 'mixed' ? '2026-11-10' : bodyDate, empty));
@@ -77,18 +81,28 @@ test('shared weekday pass uses real D1/Workflows with recorded feeds, no live tr
     assert.equal((await saveConfig(db, owner.id, config.revision, config.text.replace('["quant-ph"]', '["quant-ph", "cs.ET"]'))).status, 'saved');
     const before = [await readReading(db, owner.id), await readReading(db, friend.id)];
 
-    await t.test('partial HTTP/XML/mixed-date ingestion consumes the day without admitting anyone', async () => {
-      for (const [date, failure] of [['2030-01-08', 'http'], ['2030-01-09', 'xml'], ['2030-01-10', 'mixed']] as const) {
+    await t.test('partial HTTP/XML/mixed-date ingestion consumes the day without admitting anyone', async t => {
+      const diagnostics: string[] = [];
+      t.mock.method(console, 'error', (message: string) => diagnostics.push(message));
+      for (const [date, failure] of [['2030-01-07', 'network'], ['2030-01-08', 'http'], ['2030-01-09', 'xml'], ['2030-01-10', 'mixed']] as const) {
         bad = failure;
         const count = calls.length;
         const results = await Promise.all([pass(date), pass(date)]);
         assert.deepEqual(results.map(r => r.status).sort(), ['duplicate', 'feed-failed']);
         assert.deepEqual(calls.slice(count), ['cs.ET', 'quant-ph']);
+        assert.deepEqual(JSON.parse(diagnostics.at(-1)!), {
+          event: 'hosted-ingestion-failed', runDate: date,
+          stage: failure === 'http' || failure === 'network' ? 'feed-fetch' : failure === 'xml' ? 'feed-read-parse' : 'batch-validation',
+          ...(failure === 'mixed' ? {} : { category: 'quant-ph' }),
+          ...(failure === 'http' || failure === 'xml' ? { httpStatus: failure === 'http' ? 503 : 200 } : {}),
+        });
         bad = undefined;
         assert.equal((await pass(date)).status, 'duplicate'); // Repair is not a same-day retry.
         assert.equal(await db.prepare('SELECT 1 FROM generation_runs').first(), null);
         assert.deepEqual([await readReading(db, owner.id), await readReading(db, friend.id)], before);
       }
+      assert.equal(diagnostics.length, 4); // Duplicates never emit another failure or retry ingestion.
+      assert.ok(diagnostics.every(message => !message.includes('recorded failure') && !message.includes('<not-rss>') && !message.includes('sensitive transport details')));
       assert.match(await adminRunStatus(db, owner.id), /feed ingestion failed; no users were admitted/);
       assert.equal(await adminRunStatus(db, friend.id), '');
     });
@@ -164,15 +178,19 @@ test('shared weekday pass uses real D1/Workflows with recorded feeds, no live tr
       assert.equal((await pass('2030-01-18')).status, 'duplicate');
     });
 
-    await t.test('empty valid feeds publish empty listings without model calls', async () => {
+    await t.test('empty valid feeds reuse the latest nonempty batch without new model calls', async () => {
       bodyDate = '2030-01-21'; empty = true;
       const paid = (await db.prepare("SELECT sum(calls) AS n FROM fixture_calls WHERE kind != 'step'").first<{ n: number }>())!.n;
       assert.equal((await pass('2030-01-21')).status, 'complete');
-      for (const user of [owner, friend]) assert.equal((await readReading(db, user.id))!.digest.papers.length, 0);
+      for (const user of [owner, friend]) {
+        const reading = (await readReading(db, user.id))!;
+        assert.equal(reading.digest.date, '2030-01-16');
+        assert.ok(reading.digest.papers.length > 0);
+      }
       assert.equal((await db.prepare("SELECT sum(calls) AS n FROM fixture_calls WHERE kind != 'step'").first<{ n: number }>())!.n, paid);
     });
 
-    await t.test('the local scheduled-event entry uses recorded transport; default deployments stay unwired', async () => {
+    await t.test('the local scheduled-event entry uses recorded transport and duplicate events remain no-ops', async () => {
       for (const category of ['quant-ph', 'cs.ET']) await db.prepare('INSERT INTO fixture_feeds (category,xml,status) VALUES (?,?,200)')
         .bind(category, feed(category, bodyDate, true)).run();
       await worker.scheduled({ scheduledTime: new Date(timestamp('2030-01-22')), cron: '0 10,11 * * 1-5' });
@@ -182,11 +200,11 @@ test('shared weekday pass uses real D1/Workflows with recorded feeds, no live tr
       for (const category of ['quant-ph', 'cs.ET']) await db.prepare('UPDATE fixture_feeds SET xml = ? WHERE category = ?')
         .bind(feed(category, '2030-01-23', true), category).run();
       await worker.scheduled({ scheduledTime: new Date(timestamp('2030-01-23')), cron: '0 10,11 * * 1-5' });
-      for (const row of (await db.prepare('SELECT generation_id FROM generation_runs').all<{ generation_id: string }>()).results) {
+      for (const row of (await db.prepare('SELECT generation_id FROM generation_runs WHERE generation_id IS NOT NULL').all<{ generation_id: string }>()).results) {
         assert.equal(await done(row.generation_id), 'published');
       }
-      for (const user of [owner, friend]) assert.equal((await readReading(db, user.id))!.digest.date, '2030-01-23');
-      for (const file of ['wrangler.production.jsonc', 'wrangler.hosted.jsonc']) assert.doesNotMatch(readFileSync(file, 'utf8'), /"crons"\s*:/);
+      for (const user of [owner, friend]) assert.equal((await readReading(db, user.id))!.digest.date, '2030-01-16');
+      assert.doesNotMatch(readFileSync('wrangler.hosted.jsonc', 'utf8'), /"crons"\s*:\s*\[\s*"/);
     });
     await t.test('an account disabled during ingestion is not admitted', async () => {
       const before = await readReading(db, friend.id);
@@ -202,10 +220,12 @@ test('shared weekday pass uses real D1/Workflows with recorded feeds, no live tr
     });
 
     await t.test('scheduled summary ceilings are per user, not one shared allowance', async () => {
-      const budget = (await db.prepare(`SELECT max(charged_input) AS n FROM summary_outcomes o
-        JOIN current_readings c ON c.listing_id = o.generation_id WHERE c.user_id = ?`).bind(owner.id).first<{ n: number }>())!.n;
-      assert.ok(budget > 0);
       const config = (await readSavedConfig(db, owner.id))!;
+      const reading = (await readReading(db, owner.id))!;
+      const text = extractArxivHtml(readFileSync('test/fixtures/paper-unsectioned.html', 'utf8'));
+      const budget = Math.max(...reading.digest.papers.map(p =>
+        estimatePromptTokens(summaryMessages(p, text), parseConfig(config.text).tokenizer).estimatedInputTokens));
+      assert.ok(budget > 0);
       assert.equal((await saveConfig(db, owner.id, config.revision, config.text.replace('run_input_tokens = 500000', `run_input_tokens = ${budget}`)
         .replace('openai/gpt-6-luna', 'fixture/budget-test'))).status, 'saved');
       bodyDate = '2030-01-25';

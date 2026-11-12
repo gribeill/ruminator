@@ -15,6 +15,7 @@
  */
 
 import type { Paper } from './arxiv.ts';
+import { DocumentError } from './document-error.ts';
 
 export type VoteValue = -1 | 0 | 1;
 export type Votes = Record<string, -1 | 1>;
@@ -33,7 +34,7 @@ export function validateFeedbackConfig(config: FeedbackConfig): void {
   if (!Number.isFinite(config.min_similarity) || config.min_similarity < 0 || config.min_similarity >= 1 ||
       !Number.isFinite(config.near_duplicate_similarity) || config.near_duplicate_similarity < config.min_similarity ||
       config.near_duplicate_similarity > 1) {
-    throw new Error('feedback thresholds must satisfy 0 <= min_similarity < 1 and min_similarity <= near_duplicate_similarity <= 1');
+    throw new DocumentError('feedback', 'feedback thresholds must satisfy 0 <= min_similarity < 1 and min_similarity <= near_duplicate_similarity <= 1');
   }
 }
 

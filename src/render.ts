@@ -18,7 +18,7 @@ import { pdfUrl, type Paper } from './arxiv.ts';
 import type { Digest } from './digest.ts';
 import { escapeHtml as escape, renderMathText } from './math.ts';
 import { compactAuthors, displayName } from './authors.ts';
-import { summaryUnavailableLabel } from './summary-content.ts';
+import { uiText, uiHtml } from './ui-text.ts';
 import { paperAnchor, type Votes } from './feedback.ts';
 
 export interface VotingView {
@@ -43,14 +43,14 @@ export const brandStyles = `
 /** Hosted navigation is accessible text; only the decorative cow/tail is hidden. */
 export function renderBrand(navigation?: CowNavigation): string {
   const drawing = `<pre class="cow" aria-hidden="true">${escape(navigation ? '          \\\n           \\\n' + cow : cow)}</pre>`;
-  if (!navigation) return `<div class="brand"><h1>ruminator</h1>${drawing}</div>`;
+  if (!navigation) return `<div class="brand"><h1>${uiHtml('shared.name')}</h1>${drawing}</div>`;
   const links = navigation.links.map(link => `<a href="${escape(link.href)}">${escape(link.label)}</a>`).join(' | ');
   // Measure visible labels, not HTML markup, so the ASCII frame stays aligned.
   const length = navigation.links.map(link => link.label).join(' | ').length;
   const width = Math.max(12, length);
-  const bubble = `<nav class="cow-bubble" aria-label="Account"><span aria-hidden="true"> ${'_'.repeat(width + 2)}\n&lt; </span>${links}<span aria-hidden="true">${' '.repeat(width - length)} &gt;\n ${'-'.repeat(width + 2)}</span></nav>`;
-  const account = navigation.email ? `<p class="cow-email">${escape(navigation.email)} | <a href="/reader">Digest</a></p>` : '';
-  return `<div class="brand"><div class="brand-user"><h1>ruminator</h1>${account}</div><div class="cow-account">${bubble}${drawing}</div></div>`;
+  const bubble = `<nav class="cow-bubble" aria-label="${uiHtml('navigation.account')}"><span aria-hidden="true"> ${'_'.repeat(width + 2)}\n&lt; </span>${links}<span aria-hidden="true">${' '.repeat(width - length)} &gt;\n ${'-'.repeat(width + 2)}</span></nav>`;
+  const account = navigation.email ? `<p class="cow-email">${escape(navigation.email)} | <a href="/reader">${uiHtml('navigation.digest')}</a></p>` : '';
+  return `<div class="brand"><div class="brand-user"><h1>${uiHtml('shared.name')}</h1>${account}</div><div class="cow-account">${bubble}${drawing}</div></div>`;
 }
 
 export const footerStyles = `
@@ -61,7 +61,7 @@ footer a { text-decoration: none; }
 
 /** Resolve the year when serving, even when the saved digest predates New Year. */
 export function renderFooter(): string {
-  return `<footer>© Guilhem Ribeill ${new Date().getFullYear()} | <a href="https://github.com/gribeill/ruminator">GitHub</a> | <span class="footer-cow" aria-hidden="true">  ^__^\n  (oo)</span></footer>`;
+  return `<footer>${uiHtml('footer.copyright', { year: new Date().getFullYear() })} | <a href="https://github.com/gribeill/ruminator">${uiHtml('footer.github')}</a> | <span class="footer-cow" aria-hidden="true">  ^__^\n  (oo)</span></footer>`;
 }
 
 function voteControls(id: string, voting?: VotingView): string {
@@ -70,8 +70,8 @@ function voteControls(id: string, voting?: VotingView): string {
   return `<form class="vote-controls" method="post" action="${escape(voting.action ?? '/vote')}">
 <input type="hidden" name="paper" value="${escape(id)}">
 <input type="hidden" name="token" value="${escape(voting.csrfToken)}">
-<button type="submit" name="value" value="${current === 1 ? 0 : 1}" aria-pressed="${current === 1}" aria-label="${current === 1 ? 'Clear upvote' : 'More relevant'}" title="${current === 1 ? 'Clear upvote' : 'More relevant to my interests'}">+</button>
-<button type="submit" name="value" value="${current === -1 ? 0 : -1}" aria-pressed="${current === -1}" aria-label="${current === -1 ? 'Clear downvote' : 'Less relevant'}" title="${current === -1 ? 'Clear downvote' : 'Less relevant to my interests'}">−</button>
+<button type="submit" name="value" value="${current === 1 ? 0 : 1}" aria-pressed="${current === 1}" aria-label="${uiHtml(current === 1 ? 'votes.clear_up' : 'votes.more')}" title="${uiHtml(current === 1 ? 'votes.clear_up' : 'votes.more_tooltip')}">${uiHtml('votes.up_symbol')}</button>
+<button type="submit" name="value" value="${current === -1 ? 0 : -1}" aria-pressed="${current === -1}" aria-label="${uiHtml(current === -1 ? 'votes.clear_down' : 'votes.less')}" title="${uiHtml(current === -1 ? 'votes.clear_down' : 'votes.less_tooltip')}">${uiHtml('votes.down_symbol')}</button>
 </form>`;
 }
 
@@ -84,38 +84,38 @@ const cow = String.raw`            ^__^
 
 function abstract(paper: Paper, collapsible = false): string {
   const text = `<p class="abstract">${renderMathText(paper.abstract)}</p>`;
-  return collapsible ? `<details class="featured-abstract"><summary>Abstract</summary>${text}</details>` : text;
+  return collapsible ? `<details class="featured-abstract"><summary>${uiHtml('reading.abstract')}</summary>${text}</details>` : text;
 }
 
 // Keep actions outside both featured disclosures, but inside remaining-paper dropdowns.
 function paperLinks(paper: Paper): string {
-  return `<div class="paper-actions"><span><a href="${escape(pdfUrl(paper))}">PDF</a> | <a href="https://arxiv.org/abs/${escape(paper.id)}v${paper.version}">arXiv:${escape(paper.id)}</a></span>`;
+  return `<div class="paper-actions"><span><a href="${escape(pdfUrl(paper))}">${uiHtml('reading.pdf')}</a> | <a href="https://arxiv.org/abs/${escape(paper.id)}v${paper.version}">${uiHtml('reading.arxiv', { id: paper.id })}</a></span>`;
 }
 
 function summary(paper: Paper, digest: Digest): string {
   const result = digest.summaries?.[paper.id];
   if (result?.status === 'available') {
-    return `<details class="paper-summary"><summary>AI summary</summary><p>${renderMathText(result.summary!)}</p></details>`;
+    return `<details class="paper-summary"><summary>${uiHtml('reading.summary')}</summary><p>${renderMathText(result.summary!)}</p></details>`;
   }
-  const reason = result ? summaryUnavailableLabel(result.status) : 'not generated';
-  return `<p class="summary-unavailable">Summary unavailable: ${escape(reason)}</p>`;
+  const reason = uiText(result ? `summary.${result.status}` : 'summary.not_generated');
+  return `<p class="summary-unavailable">${uiHtml('summary.unavailable', { reason })}</p>`;
 }
 
 function authors(paper: Paper): string {
   const names = paper.authors ?? [];
   return names.length ? `<span class="authors" title="${escape(names.map(displayName).join('; '))}">${escape(compactAuthors(names))}</span>`
-    : '<span class="authors">Authors unavailable</span>';
+    : `<span class="authors">${uiHtml('reading.authors_unavailable')}</span>`;
 }
 
 /** Round only for display; saved relevance and ordering retain their full precision. */
 function score(id: string, digest: Digest): string {
   const value = digest.ranking?.scores[id]?.total ?? digest.semantic?.papers[id]?.score;
-  return value === undefined ? '' : `<small class="score" title="${digest.ranking ? 'Combined relevance' : 'Semantic similarity'} (not a probability)">${value.toFixed(2)}</small>`;
+  return value === undefined ? '' : `<small class="score" title="${uiHtml(digest.ranking ? 'reading.combined_score' : 'reading.semantic_score')}">${value.toFixed(2)}</small>`;
 }
 
 function selectionLabel(id: string, digest: Digest): string {
   const role = digest.ranking?.featured.find(p => p.id === id)?.role;
-  return role ? `<small class="selection">${{ relevant: 'Selected', adjacent: 'Adjacent', wildcard: 'Wildcard' }[role]}</small>` : '';
+  return role ? `<small class="selection">${uiHtml({ relevant: 'reading.selected', adjacent: 'reading.adjacent', wildcard: 'reading.wildcard' }[role])}</small>` : '';
 }
 
 /** Pre-render scientific content; only the small form is dynamic. No placeholder
@@ -142,14 +142,14 @@ export function createDigestRenderer(digest: Digest, navigation?: CowNavigation)
   const rest = digest.ranking ? digest.ranking.remainingIds.map(id => byId.get(id)!) : digest.papers.filter(p => !selected.has(p.id));
   const featuredViews = featured.map(p => preparePaper(p, digest, true));
   const remainingViews = rest.map(p => preparePaper(p, digest, false));
-  const featuredHeading = digest.ranking ? 'Featured papers' : 'Random picks';
+  const featuredHeading = uiHtml(digest.ranking ? 'reading.featured' : 'reading.random');
   const empty = digest.papers.length === 0;
   const header = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ruminator · ${escape(digest.date)}</title>
+<title>${uiHtml('reading.title', { app_name: uiText('shared.name'), date: digest.date })}</title>
 <link rel="stylesheet" href="/assets/katex/katex.min.css">
 <style>
 /* Approximate the personal site's XMin theme without importing Hugo navigation/assets. */
@@ -185,16 +185,16 @@ details { margin: 1rem 0; }
 </head>
 <body>
 <header>${renderBrand(navigation)}
-<p>${escape(digest.categories.join(', '))} · Announcement: <time datetime="${escape(digest.date)}">${escape(digest.date)}</time> · ${digest.papers.length} papers</p>
+<p>${escape(digest.categories.join(', '))} · ${uiHtml('reading.announcement')} <time datetime="${escape(digest.date)}">${escape(digest.date)}</time> · ${uiHtml('reading.paper_count', { count: digest.papers.length })}</p>
 `;
-  return voting => `${header}${voting ? '<p>+ / − mean more/less relevant to your interests, not scientific quality. Votes affect future recommendations; this digest stays fixed.</p>' : ''}
+  return voting => `${header}${voting ? `<p>${uiHtml('votes.guidance')}</p>` : ''}
 </header>
 <main>
 <section><h2>${featuredHeading}</h2>
 ${featuredViews.map(render => render(voting)).join('\n')}
-${empty ? '<p>No new papers in this announcement batch.</p>' : ''}
+${empty ? `<p>${uiHtml('reading.empty')}</p>` : ''}
 </section>
-<section><h2>Other postings (${remainingViews.length})</h2>
+<section><h2>${uiHtml('reading.other_postings', { count: remainingViews.length })}</h2>
 ${remainingViews.map(render => render(voting)).join('\n')}
 </section>
 </main>

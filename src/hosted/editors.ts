@@ -3,6 +3,7 @@
 
 import type { D1Database } from '@cloudflare/workers-types';
 import { escapeHtml } from '../math.ts';
+import { uiText, uiHtml } from '../ui-text.ts';
 import { adminRunStatus } from './run-status.ts';
 import { readResponseText } from '../http-body.ts';
 import { formToken, verifyFormToken } from './auth.ts';
@@ -31,34 +32,33 @@ async function appliedStatus(db: D1Database, userId: string, kind: Kind, saved: 
     .bind(userId).first<{ published: number | null; working: number | null; listing: string | null; summary_revision: number | null; working_summary_revision: number | null }>();
   if (!row) return '';
   const published = row.published === null
-    ? row.listing ? 'The current listing has no recorded applied revision.' : 'No listing has been published yet.'
-    : kind === 'config' ? `Your current ranking uses revision ${row.published}; summaries use revision ${row.summary_revision}.`
-      : `Your current listing uses revision ${row.published}.`;
-  const working = row.working === null ? 'No generation is currently working.' : `The working generation is frozen at revision ${row.working}.`
-    + (kind === 'config' ? ` Summary settings use revision ${row.working_summary_revision}.` : '');
-  const pending = row.published === saved ? 'The saved revision is applied to your current listing.'
-    : 'The saved revision is pending for a future publication.';
-  return `<section aria-label="Saved and applied revisions"><p>Saved revision ${saved}. ${published}</p><p>${working} ${pending}</p></section>`;
+    ? uiText(row.listing ? 'editor.unrecorded_revision' : 'reading.public_waiting')
+    : kind === 'config' ? uiText('editor.published_config', { revision: row.published, summary_revision: row.summary_revision! })
+      : uiText('editor.published', { revision: row.published });
+  const working = row.working === null ? uiText('editor.not_working') : uiText('editor.working', { revision: row.working })
+    + (kind === 'config' ? ' ' + uiText('editor.working_summary', { revision: row.working_summary_revision! }) : '');
+  const pending = uiText(row.published === saved ? 'editor.applied' : 'editor.pending');
+  return `<section aria-label="${uiHtml('editor.revision_label')}"><p>${uiHtml('editor.saved_revision', { revision: saved })} ${escapeHtml(published)}</p><p>${escapeHtml(working)} ${escapeHtml(pending)}</p></section>`;
 }
 
 async function form(db: D1Database, user: User, session: string, kind: Kind, document: SavedDocument,
   saved: SavedDocument | undefined, error?: string, forbidden = false): Promise<string> {
-  const label = kind === 'interests' ? 'Interests (Markdown)' : 'Hosted configuration (TOML)';
+  const label = uiHtml(kind === 'interests' ? 'editor.interests_label' : 'editor.config_label');
   const token = await formToken(user.csrf_secret, user.id, session, scope(kind, document.revision));
-  return `<p>Save changes for the next new generation. Saving does not start generation or change an existing listing or frozen working generation. An unchanged posting batch is not automatically rebuilt.</p>
-${kind === 'config' ? '<p>These settings apply globally, on each user’s next new generation. Status below describes your own listing. Credentials are not editable here.</p>' : '<p>Keep the Markdown profile headings and stable IDs. Edit subjects and keywords directly.</p>'}
+  return `<p>${uiHtml('editor.guidance')}</p>
+<p>${uiHtml(kind === 'config' ? 'editor.config_guidance' : 'editor.interests_guidance')}</p>
 ${saved ? await appliedStatus(db, user.id, kind, saved.revision) : ''}
 ${kind === 'config' ? await adminRunStatus(db, user.id) : ''}
 ${error ? `<p role="alert">${escapeHtml(error)}</p>` : ''}
 <form method="post" action="${pathFor(kind)}">
 <input type="hidden" name="revision" value="${document.revision}">
 <input type="hidden" name="token" value="${token}">
-<p>Editor base revision ${document.revision}.</p>
+<p>${uiHtml('editor.base_revision', { revision: document.revision })}</p>
 <label for="document">${label}</label>
 <textarea id="document" name="text" rows="28" spellcheck="false">\n${escapeHtml(document.text)}</textarea>
-<p>Maximum document size: 64 KiB UTF-8.</p>
-${forbidden ? '' : '<button type="submit">Save</button>'}
-</form><p><a href="${pathFor(kind)}" target="_blank" rel="noopener">Open latest saved version in a new tab</a> (does not replace the text above).</p>`;
+<p>${uiHtml('editor.size')}</p>
+${forbidden ? '' : `<button type="submit">${uiHtml('editor.save')}</button>`}
+</form><p><a href="${pathFor(kind)}" target="_blank" rel="noopener">${uiHtml('editor.open_latest')}</a> ${uiHtml('editor.open_latest_note')}</p>`;
 }
 
 /** Called only after Access authentication, route authorization and POST Origin
@@ -70,27 +70,27 @@ export async function documentEditor(request: Request, db: D1Database, user: Use
   const read = () => kind === 'interests' ? readSavedInterests(db, user.id) : readSavedConfig(db, user.id);
   if (request.method !== 'POST') {
     const saved = await read();
-    if (!saved) return { status: 200, body: '<p>The saved document is unavailable. An operator must initialize configuration or review account permissions.</p>' };
+    if (!saved) return { status: 200, body: `<p>${uiHtml('editor.document_unavailable')}</p>` };
     return { status: 200, body: request.method === 'HEAD' ? '' : await form(db, user, session, kind, saved, saved) };
   }
   if (!/^application\/x-www-form-urlencoded(?:;|$)/i.test(request.headers.get('content-type') ?? '')) {
-    return { status: 415, body: '<p>Expected an editor form.</p>' };
+    return { status: 415, body: `<p>${uiHtml('editor.form_expected')}</p>` };
   }
   let fields: URLSearchParams;
   try { fields = new URLSearchParams(await readResponseText(request, 3 * 65536 + 2048)); }
-  catch { return { status: 413, body: '<p>The form could not be read or exceeds the transport limit. Your browser may retain it when you go back.</p>' }; }
+  catch { return { status: 413, body: `<p>${uiHtml('editor.form_large')}</p>` }; }
   if ([...fields.keys()].length !== 3 || ['revision', 'token', 'text'].some(k => fields.getAll(k).length !== 1) ||
-      !/^[1-9]\d*$/.test(fields.get('revision') ?? '')) return { status: 400, body: '<p>Invalid editor form.</p>' };
+      !/^[1-9]\d*$/.test(fields.get('revision') ?? '')) return { status: 400, body: `<p>${uiHtml('editor.form_invalid')}</p>` };
   const revision = Number(fields.get('revision'));
   if (!Number.isSafeInteger(revision) || !await verifyFormToken(fields.get('token')!, user.csrf_secret, user.id, session, scope(kind, revision))) {
-    return { status: 403, body: '<p>Invalid or outdated session/form. Open the editor again after logging in.</p>' };
+    return { status: 403, body: `<p>${uiHtml('editor.form_stale')}</p>` };
   }
   const text = fields.get('text')!;
   const result = kind === 'interests' ? await saveInterests(db, user.id, revision, text) : await saveConfig(db, user.id, revision, text);
   if (result.status === 'saved') return { status: 303, body: '', location: pathFor(kind) };
   const error = result.status === 'invalid' ? result.error : result.status === 'conflict'
-    ? 'A newer revision was saved. Your submission is preserved below. Open the latest saved version in a new tab and reconcile your edits there; this form still targets its original revision.'
-    : 'Saving is no longer permitted. Your submission is preserved below; no changes were saved.';
+    ? uiText('editor.conflict')
+    : uiText('editor.forbidden');
   return { status: result.status === 'invalid' ? 422 : result.status === 'conflict' ? 409 : 403,
     body: await form(db, user, session, kind, { text: result.text, revision }, await read(), error, result.status === 'forbidden') };
 }
