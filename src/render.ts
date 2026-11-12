@@ -28,6 +28,41 @@ export interface VotingView {
 }
 
 export interface ReadingLink { href: string; label: string }
+export interface CowNavigation { links: readonly ReadingLink[]; email?: string }
+
+export const brandStyles = `
+.brand { display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap; background: #eee; padding: 5px; border-radius: 5px; margin: 1em 0; }
+.brand h1 { margin: 0.3em 0; }
+.cow { margin: 0 0 0 auto; font: 12px/1.2 "Lucida Console", Monaco, monospace; white-space: pre; }
+.cow-account { margin-left: auto; max-width: 100%; }
+.cow-bubble { white-space: pre; font: 11px/1.2 "Lucida Console", Monaco, monospace; }
+.brand-user { min-width: 0; max-width: 100%; }
+.cow-email { margin: 0.4em 0 0; font: 11px/1.4 "Lucida Console", Monaco, monospace; overflow-wrap: anywhere; }
+`;
+
+/** Hosted navigation is accessible text; only the decorative cow/tail is hidden. */
+export function renderBrand(navigation?: CowNavigation): string {
+  const drawing = `<pre class="cow" aria-hidden="true">${escape(navigation ? '          \\\n           \\\n' + cow : cow)}</pre>`;
+  if (!navigation) return `<div class="brand"><h1>ruminator</h1>${drawing}</div>`;
+  const links = navigation.links.map(link => `<a href="${escape(link.href)}">${escape(link.label)}</a>`).join(' | ');
+  // Measure visible labels, not HTML markup, so the ASCII frame stays aligned.
+  const length = navigation.links.map(link => link.label).join(' | ').length;
+  const width = Math.max(12, length);
+  const bubble = `<nav class="cow-bubble" aria-label="Account"><span aria-hidden="true"> ${'_'.repeat(width + 2)}\n&lt; </span>${links}<span aria-hidden="true">${' '.repeat(width - length)} &gt;\n ${'-'.repeat(width + 2)}</span></nav>`;
+  const account = navigation.email ? `<p class="cow-email">${escape(navigation.email)} | <a href="/reader">Digest</a></p>` : '';
+  return `<div class="brand"><div class="brand-user"><h1>ruminator</h1>${account}</div><div class="cow-account">${bubble}${drawing}</div></div>`;
+}
+
+export const footerStyles = `
+footer { text-align: center; margin-top: 2em; border-top: 1px dashed #ddd; padding-top: 1em; }
+footer a { text-decoration: none; }
+.footer-cow { display: inline-block; vertical-align: middle; text-align: left; white-space: pre; font: 12px/1.2 "Lucida Console", Monaco, monospace; }
+`;
+
+/** Resolve the year when serving, even when the saved digest predates New Year. */
+export function renderFooter(): string {
+  return `<footer>© Guilhem Ribeill ${new Date().getFullYear()} | <a href="https://github.com/gribeill/ruminator">GitHub</a> | <span class="footer-cow" aria-hidden="true">  ^__^\n  (oo)</span></footer>`;
+}
 
 function voteControls(id: string, voting?: VotingView): string {
   if (!voting) return '';
@@ -99,7 +134,7 @@ function preparePaper(paper: Paper, digest: Digest, featured: boolean): (voting?
 /** Compile one publication into static HTML fragments, including all KaTeX output.
  * Reuse the returned renderer across requests; votes and CSRF tokens remain live.
  */
-export function createDigestRenderer(digest: Digest, links: readonly ReadingLink[] = []): (voting?: VotingView) => string {
+export function createDigestRenderer(digest: Digest, navigation?: CowNavigation): (voting?: VotingView) => string {
   const byId = new Map(digest.papers.map(p => [p.id, p]));
   const featuredIds = digest.ranking?.featured.map(p => p.id) ?? digest.featuredIds;
   const featured = featuredIds.map(id => byId.get(id)!);
@@ -122,9 +157,8 @@ body { max-width: 800px; margin: auto; padding: 1em; line-height: 1.5; font-fami
 h1, h2, h3 { line-height: 1.3; }
 h3 { font-size: 1.1rem; }
 header { border-bottom: 1px dashed #ddd; padding-bottom: 1em; }
-.brand { display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap; background: #eee; padding: 5px; border-radius: 5px; margin: 1em 0; }
-.brand h1 { margin: 0.3em 0; }
-.cow { margin: 0 0 0 auto; font: 12px/1.2 "Lucida Console", Monaco, monospace; white-space: pre; }
+${brandStyles}
+${footerStyles}
 main { hyphens: auto; overflow-wrap: break-word; }
 main > section + section { border-top: 1px dashed #ddd; }
 article { margin: 2em 0; }
@@ -150,12 +184,10 @@ details { margin: 1rem 0; }
 </style>
 </head>
 <body>
-<header><div class="brand"><h1>ruminator</h1>
-<pre class="cow" aria-hidden="true">${escape(cow)}</pre></div>
+<header>${renderBrand(navigation)}
 <p>${escape(digest.categories.join(', '))} · Announcement: <time datetime="${escape(digest.date)}">${escape(digest.date)}</time> · ${digest.papers.length} papers</p>
 `;
-  const navigation = links.length ? `<nav>${links.map(link => `<a href="${escape(link.href)}">${escape(link.label)}</a>`).join(' · ')}</nav>` : '';
-  return voting => `${header}${navigation}${voting ? '<p>+ / − mean more/less relevant to your interests, not scientific quality. Votes affect future recommendations; this digest stays fixed.</p>' : ''}
+  return voting => `${header}${voting ? '<p>+ / − mean more/less relevant to your interests, not scientific quality. Votes affect future recommendations; this digest stays fixed.</p>' : ''}
 </header>
 <main>
 <section><h2>${featuredHeading}</h2>
@@ -166,6 +198,7 @@ ${empty ? '<p>No new papers in this announcement batch.</p>' : ''}
 ${remainingViews.map(render => render(voting)).join('\n')}
 </section>
 </main>
+${renderFooter()}
 </body>
 </html>`;
 }

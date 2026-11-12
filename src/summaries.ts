@@ -21,17 +21,9 @@ import { featuredPapers, type Digest } from './digest.ts';
 import { estimatePromptTokens } from './tokenizer.ts';
 import { claimSummary, completeSummary, readPaperText, readSummaryCache, readSummaries, startSummaryRun } from './store.ts';
 
-import { summaryMessages, summaryUnavailableLabel, SummaryError, type SummaryConfig, type SummaryProvider, type SummaryUsage, type PaperSummary } from './summary-content.ts';
+import { SUMMARY_PROMPT_VERSION, validateSummary, summaryMessages, summaryUnavailableLabel, SummaryError, type SummaryConfig, type SummaryProvider, type SummaryUsage, type PaperSummary } from './summary-content.ts';
 export * from './summary-content.ts';
 
-export const SUMMARY_PROMPT_VERSION = 'fulltext-two-sentences-v2';
-/** Formatting checks cannot verify factuality or reliably count scientific sentences. */
-export function validateSummary(text: unknown): string {
-  if (typeof text !== 'string' || !text.trim() || text.trim().length > 4000 || /^\s*```/.test(text)) {
-    throw new SummaryError('summarization_error', 'Missing, oversized, or malformed summary text');
-  }
-  return text.trim();
-}
 
 /** Local preflight for all featured papers, irrespective of saved summary outcomes.
  * Missing text makes totals partial; output allowances are caps, not predictions.

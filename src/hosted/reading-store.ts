@@ -15,8 +15,9 @@ export interface User {
 }
 export interface ReadingPublication { generationId: string; digest: Digest }
 export type ReadingMetadata = Omit<Digest, 'papers' | 'semantic' | 'ranking' | 'summaries'> & {
+  paperCount: number;
   semantic?: Omit<SemanticScores, 'papers'>;
-  ranking?: Omit<Ranking, 'scores' | 'remainingIds'>;
+  ranking?: Omit<Ranking, 'scores' | 'remainingIds' | 'feedbackSnapshot'>;
 };
 
 /** Access is the invitation authority. Re-login never resets role, enabled state,
@@ -34,18 +35,42 @@ export async function provisionUser(db: D1Database, identity: Identity): Promise
   return results[1].results[0];
 }
 
-/** Pin one immutable projection ID; future cleanup must preserve in-flight readers.
- * Per-paper UI data is normalized, not stored in a potentially oversized digest JSON row.
+export class ReadingUnavailableError extends Error {
+  constructor() { super('Listing changed while loading; please retry'); }
+}
+
+/** Daily replacement is rare: retry one incomplete read, rather than maintain
+ * reader leases. Never serve a truncated projection if cleanup overtook a read.
  */
 export async function readReading(db: D1Database, userId: string): Promise<ReadingPublication | undefined> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try { return await readPinnedReading(db, userId); }
+    catch (error) { if (!(error instanceof ReadingUnavailableError) || attempt === 1) throw error; }
+  }
+  throw new ReadingUnavailableError();
+}
+
+async function readPinnedReading(db: D1Database, userId: string): Promise<ReadingPublication | undefined> {
   const session = db.withSession('first-primary');
   const listing = await session.prepare(`SELECT r.id, r.metadata_json FROM current_readings c
     JOIN reading_listings r ON r.id = c.listing_id AND r.user_id = c.user_id WHERE c.user_id = ?`)
     .bind(userId).first<{ id: string; metadata_json: string }>();
   if (!listing) return undefined;
-  const rows = (await session.prepare('SELECT * FROM reading_papers WHERE listing_id = ? ORDER BY ordinal')
-    .bind(listing.id).all<{ paper_id: string; paper_json: string; semantic_json: string | null; relevance_json: string | null; summary_json: string | null }>()).results;
   const meta = JSON.parse(listing.metadata_json) as ReadingMetadata;
+  if (!Number.isSafeInteger(meta.paperCount) || meta.paperCount < 0) throw new ReadingUnavailableError();
+  type ReadingRow = { ordinal: number; paper_id: string; paper_json: string; semantic_json: string | null; relevance_json: string | null; summary_json: string | null };
+  const rows: ReadingRow[] = [];
+  // Pin the immutable ID across bounded pages, even if publication changes meanwhile.
+  for (;;) {
+    const page = (await session.prepare('SELECT * FROM reading_papers WHERE listing_id = ? AND ordinal >= ? ORDER BY ordinal LIMIT 8')
+      .bind(listing.id, rows.length).all<ReadingRow>()).results;
+    if (rows.length + page.length > meta.paperCount || page.some((row, index) => row.ordinal !== rows.length + index)) {
+      throw new ReadingUnavailableError();
+    }
+    rows.push(...page);
+    if (page.length < 8) break;
+  }
+  if (rows.length !== meta.paperCount) throw new ReadingUnavailableError();
   const values = (field: 'semantic_json' | 'relevance_json' | 'summary_json') => Object.fromEntries(
     rows.filter(row => row[field] !== null).map(row => [row.paper_id, JSON.parse(row[field]!) ]));
   return {

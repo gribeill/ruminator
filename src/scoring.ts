@@ -25,11 +25,8 @@ import { rankPapers, DEFAULT_WEIGHTS, type ScoreWeights } from './ranking.ts';
 import type { PaperScore, SemanticScores } from './semantic-types.ts';
 export type { PaperScore, SemanticScores } from './semantic-types.ts';
 
-/** Fixed scale, not daily min-max scaling or a calibrated probability. */
-export function visibleScore(cosine: number): number {
-  if (!Number.isFinite(cosine)) throw new Error('Non-finite cosine similarity');
-  return (Math.max(-1, Math.min(1, cosine)) + 1) / 2;
-}
+import { scorePaper } from './semantic-scoring.ts';
+export { visibleScore } from './semantic-scoring.ts';
 
 export async function cachedEmbedding(db: DatabaseSync, provider: EmbeddingProvider, input: EmbeddingInput): Promise<number[]> {
   const hash = embeddingInputHash(input);
@@ -81,12 +78,7 @@ export async function scoreDigest(
       const vector = await cachedEmbedding(db, provider, paperEmbeddingInput(paper));
       vectors[paper.id] = vector;
       if (existing) continue;
-      const similarities = queries.map(query => Math.max(-1, Math.min(1, query.reduce((sum, v, i) => sum + v * vector[i], 0))));
-      const best = similarities.indexOf(Math.max(...similarities));
-      papers[paper.id] = {
-        score: visibleScore(similarities[best]), cosine: similarities[best], profileId: embeddingProfiles[best].id,
-        similarities: Object.fromEntries(embeddingProfiles.map((profile, i) => [profile.id, similarities[i]])),
-      };
+      papers[paper.id] = scorePaper(embeddingProfiles, queries, vector);
     }
     const semantic = existing ?? saveSemanticScores(db, digest, {
       fingerprint: provider.fingerprint, normalization: 'cosine-affine-v1', profiles: embeddingProfiles, papers,

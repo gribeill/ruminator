@@ -1,6 +1,6 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": { "types": ["@cloudflare/workers-types"] },
-  "include": ["worker.ts"],
+  "include": ["worker.ts", "bge.ts", "ranking-runner.ts", "../cloudflare-summary.ts", "generation-workflow.ts", "../../scripts/hosted-workflow-fixture.ts", "../../scripts/hosted-ranking-fixture.ts", "../../scripts/hosted-summary-fixture.ts", "../../scripts/hosted-production-fixture.ts"],
   "exclude": []
 }

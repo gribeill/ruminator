@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Execution wiring is dormant: no Workflow binding or cron triggers.
+  // Enabling execution/scheduling requires separate explicit approval.
+  "name": "ruminator",
+  "main": "src/hosted/worker.ts",
+  "compatibility_date": "2026-01-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "papers.ribeill.net", "custom_domain": true }],
+  "vars": {
+    "HOSTED_EXECUTION_ENABLED": "false",
+    "HOSTED_SCHEDULE_ENABLED": "false",
+    "PUBLIC_ORIGIN": "https://papers.ribeill.net",
+    "ACCESS_ISSUER": "https://ruminator.cloudflareaccess.com",
+    "ACCESS_AUDIENCE": "c280d8a4336c21c167a4c8b0f92ff6ff48dcd7d0184f76bff75b05a12391c6ef"
+  },
+  "assets": { "directory": ".wrangler/hosted-assets", "binding": "ASSETS", "run_worker_first": true },
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "ruminator",
+    "database_id": "0f927a2c-5dcb-4d26-86e3-1f9b8e4c55d7"
+  }]
+}

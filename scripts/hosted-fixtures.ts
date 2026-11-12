@@ -2,13 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // LOCAL TEST SUPPORT ONLY. No fixture key or account is bundled into the hosted Worker.
+import assert from 'node:assert/strict';
+import { freezeGenerationInputs } from '../src/hosted/generation-inputs.ts';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { mkdirSync, readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { resolve } from 'node:path';
 import { exportJWK, generateKeyPair, SignJWT, type JWTPayload } from 'jose';
-import type { D1Database } from '@cloudflare/workers-types';
+import type { D1Database, Workflow } from '@cloudflare/workers-types';
 import { parseFeed } from '../src/arxiv.ts';
 import { createDigest, type Digest } from '../src/digest.ts';
 import { rankPapers } from '../src/ranking.ts';
@@ -18,7 +20,15 @@ import { SESSION_SECONDS, type Identity } from '../src/hosted/auth.ts';
 import { DEFAULT_INTERESTS } from '../src/hosted/default-interests.ts';
 import { provisionUser, type ReadingMetadata } from '../src/hosted/reading-store.ts';
 import type { HostedEnv } from '../src/hosted/app.ts';
+import { initializeSavedConfig } from '../src/hosted/saved-inputs.ts';
 import { prepareHostedAssets } from './hosted-assets.ts';
+
+/** Fixture setup expects a snapshot, not a blocked/unchanged admission. */
+export async function freezeFixtureInputs(...args: Parameters<typeof freezeGenerationInputs>) {
+  const result = await freezeGenerationInputs(...args);
+  assert.ok(result.status === 'captured', 'Fixture admission must capture a snapshot');
+  return result.inputs;
+}
 
 export const FIXTURE_AUDIENCE = 'ruminator-local-fixture';
 export const FIXTURE_EMAILS = ['owner@example.test', 'friend@example.test', 'new@example.test'];
@@ -75,7 +85,7 @@ export async function fixtureAccess() {
 
 export async function initializeHostedFixture(db: D1Database): Promise<void> {
   // This fixture schema has only simple CREATE statements, not a migration runner.
-  const ddl = readFileSync('schema/hosted.sql', 'utf8').split(';').filter(sql => sql.trim());
+  const ddl = readFileSync('schema/hosted.sql', 'utf8').replace(/^[ \t]*--.*$/gm, '').split(';').filter(sql => sql.trim());
   await db.batch(ddl.map(sql => db.prepare(sql)));
 }
 
@@ -102,9 +112,9 @@ export function fixtureDigest(label: string): Digest {
 /** Fixture writer only. The application itself exposes no publishing endpoint. */
 export async function publishFixture(db: D1Database, userId: string, digest: Digest): Promise<string> {
   const id = crypto.randomUUID();
-  const meta: ReadingMetadata = { date: digest.date, categories: digest.categories, featuredIds: digest.featuredIds };
+  const meta: ReadingMetadata = { date: digest.date, categories: digest.categories, featuredIds: digest.featuredIds, paperCount: digest.papers.length };
   if (digest.semantic) { const { papers, ...semantic } = digest.semantic; meta.semantic = semantic; }
-  if (digest.ranking) { const { scores, remainingIds, ...ranking } = digest.ranking; meta.ranking = ranking; }
+  if (digest.ranking) { const { scores, remainingIds, feedbackSnapshot, ...ranking } = digest.ranking; meta.ranking = ranking; }
   const order = digest.ranking ? [...digest.ranking.featured.map(p => p.id), ...digest.ranking.remainingIds] : digest.papers.map(p => p.id);
   const json = (value: unknown) => value === undefined ? null : JSON.stringify(value);
   await db.batch([
@@ -118,6 +128,7 @@ export async function publishFixture(db: D1Database, userId: string, digest: Dig
 
 export async function seedHostedFixture(db: D1Database, access: Awaited<ReturnType<typeof fixtureAccess>>) {
   await initializeHostedFixture(db);
+  await initializeSavedConfig(db, readFileSync('config.toml', 'utf8'));
   const owner = (await provisionUser(db, access.identity(FIXTURE_EMAILS[0])))!;
   const friend = (await provisionUser(db, access.identity(FIXTURE_EMAILS[1])))!;
   await db.prepare("UPDATE users SET role = 'admin', interests = interests || '\n<!-- ADMIN_PRIVATE_MARKER -->' WHERE id = ?").bind(owner.id).run();
@@ -127,9 +138,10 @@ export async function seedHostedFixture(db: D1Database, access: Awaited<ReturnTy
 }
 
 /** The same ephemeral workerd/D1 setup for browser previews and auth tests. */
-export async function startHostedFixture() {
+export async function startHostedFixture(testMain?: string, workflowClass?: string) {
   process.env.WRANGLER_SEND_METRICS = 'false';
   process.env.CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV = 'false';
+  process.env.XDG_CONFIG_HOME = resolve('.wrangler/config');
   mkdirSync('.wrangler/logs', { recursive: true });
   process.env.WRANGLER_LOG_PATH = resolve('.wrangler/logs/hosted-fixture.log');
   prepareHostedAssets();
@@ -138,6 +150,16 @@ export async function startHostedFixture() {
   let origin = 'http://127.0.0.1:8787';
   const workerConfig = () => {
     const settings = { PUBLIC_ORIGIN: origin, ACCESS_ISSUER: access.issuer, ACCESS_AUDIENCE: FIXTURE_AUDIENCE };
+    if (testMain) return { config: {
+      name: 'ruminator-test', main: resolve(testMain), compatibility_date: '2026-01-01',
+      workers_dev: false, preview_urls: false, vars: { ...settings,
+        ...(workflowClass ? { FIXTURE_HTML: readFileSync('test/fixtures/paper-unsectioned.html', 'utf8'),
+          HOSTED_EXECUTION_ENABLED: 'true', HOSTED_SCHEDULE_ENABLED: 'false',
+          CLOUDFLARE_ACCOUNT_ID: '0'.repeat(32), CLOUDFLARE_API_TOKEN: 'fixture-only-token', CLOUDFLARE_GATEWAY_ID: 'fixture-only' } : {}) },
+      assets: { directory: resolve('.wrangler/hosted-assets'), binding: 'ASSETS', run_worker_first: true },
+      ...(workflowClass ? { workflows: [{ binding: 'GENERATION', name: 'fixture-generation', class_name: workflowClass }] } : {}),
+      d1_databases: [{ binding: 'DB', database_name: 'ruminator-test', database_id: '00000000-0000-0000-0000-000000000000', remote: false }],
+    } };
     return { configPath: resolve('wrangler.hosted.jsonc'), vars: settings, secrets: settings };
   };
   const harness = createTestHarness({ workers: [workerConfig()] });
@@ -150,7 +172,7 @@ export async function startHostedFixture() {
     origin = url.origin;
     access.setPublicOrigin(origin);
     await harness.update({ workers: [workerConfig()] });
-    const worker = harness.getWorker<HostedEnv>();
+    const worker = harness.getWorker<HostedEnv & { GENERATION: Workflow<{ userId: string; generationId: string }> }>();
     const { DB: db } = await worker.getEnv();
     const users = await seedHostedFixture(db, access);
     return { origin, access, worker, db, ...users, close };

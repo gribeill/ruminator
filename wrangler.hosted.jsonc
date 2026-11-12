@@ -8,6 +8,8 @@
   "preview_urls": false,
   "dev": { "ip": "127.0.0.1" },
   "vars": {
+    "HOSTED_EXECUTION_ENABLED": "false",
+    "HOSTED_SCHEDULE_ENABLED": "false",
     "PUBLIC_ORIGIN": "http://127.0.0.1:8787",
     "ACCESS_ISSUER": "http://127.0.0.1:8788",
     "ACCESS_AUDIENCE": "ruminator-local-fixture"

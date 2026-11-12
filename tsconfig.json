@@ -6,9 +6,10 @@
     "strict": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
     "erasableSyntaxOnly": true,
     "skipLibCheck": true
   },
   "include": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"],
-  "exclude": ["src/hosted/worker.ts"]
+  "exclude": ["src/hosted/worker.ts", "src/hosted/generation-workflow.ts", "src/hosted/production-workflow.ts", "scripts/hosted-workflow-fixture.ts", "scripts/hosted-ranking-fixture.ts", "scripts/hosted-summary-fixture.ts", "scripts/hosted-production-fixture.ts"]
 }

@@ -73,7 +73,9 @@ async function csrfKey(secret: string) {
 }
 const formMessage = (user: string, session: string, publication: string) => new TextEncoder().encode(JSON.stringify([user, session, publication]));
 
-/** Bind forms to identity, login session, and immutable publication, without another cookie/session store. */
+/** Bind forms to identity, login session, and a scope string: publication ID for
+ * votes, or namespaced editor action/revision. No extra cookie/session store.
+ */
 export async function formToken(secret: string, user: string, session: string, publication: string): Promise<string> {
   const signature = await crypto.subtle.sign('HMAC', await csrfKey(secret), formMessage(user, session, publication));
   return Array.from(new Uint8Array(signature), b => b.toString(16).padStart(2, '0')).join('');

@@ -5,6 +5,8 @@ import type { Paper } from './arxiv.ts';
 import type { TextMessage } from './tokenizer.ts';
 import type { Config } from './config-text.ts';
 
+export const SUMMARY_PROMPT_VERSION = 'fulltext-two-sentences-v2';
+
 export type SummaryFailure = 'token_budget' | 'api_unavailable' | 'html_unavailable' | 'summarization_error';
 export type SummaryConfig = Pick<Config, 'llm' | 'tokenizer' | 'summaries'>;
 
@@ -33,6 +35,14 @@ export class SummaryError extends Error {
     this.kind = kind;
     this.usage = usage;
   }
+}
+
+/** Formatting checks cannot verify factuality or reliably count scientific sentences. */
+export function validateSummary(text: unknown): string {
+  if (typeof text !== 'string' || !text.trim() || text.trim().length > 4000 || /^\s*```/.test(text)) {
+    throw new SummaryError('summarization_error', 'Missing, oversized, or malformed summary text');
+  }
+  return text.trim();
 }
 
 export interface PaperSummary {

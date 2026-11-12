@@ -29,10 +29,10 @@ export function extractArxivHtml(html: string): string {
   }
   // TextContent alone merges adjacent paragraphs and table cells without separators.
   for (const node of article.querySelectorAll('h1,h2,h3,h4,h5,h6,p,div,section,figure,figcaption,table,tr,li,blockquote,br')) {
-    node.before(document.createTextNode('\n'));
-    node.after(document.createTextNode('\n'));
+    node.parentNode!.insertBefore(document.createTextNode('\n'), node);
+    node.parentNode!.insertBefore(document.createTextNode('\n'), node.nextSibling);
   }
-  for (const cell of article.querySelectorAll('td,th')) cell.after(document.createTextNode('\t'));
+  for (const cell of article.querySelectorAll('td,th')) cell.parentNode!.insertBefore(document.createTextNode('\t'), cell.nextSibling);
   const text = article.textContent.replace(/[\t \f\v]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   if (!text) throw new Error('HTML article is empty');
   return text;

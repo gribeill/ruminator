@@ -23,25 +23,8 @@ import { featuredPapers, type Digest } from './digest.ts';
 import { readResponseText } from './http-body.ts';
 import { readPaperText, savePaperText } from './store.ts';
 
-export const HTML_EXTRACTOR = 'arxiv-html-v2';
-const MAX_HTML_BYTES = 16 * 1024 * 1024;
-
-export interface PaperText {
-  paperId: string;
-  version: number;
-  status: 'available' | 'unavailable';
-  sourceUrl: string;
-  checkedAt: string;
-  extractor: string;
-  text?: string;
-  contentHash?: string;
-  reason?: string;
-}
-
-export interface CachedPaperText {
-  html: string | null;
-  result: PaperText;
-}
+import { HTML_EXTRACTOR, MAX_HTML_BYTES, type PaperText } from './fulltext-types.ts';
+export { HTML_EXTRACTOR, type PaperText, type CachedPaperText } from './fulltext-types.ts';
 
 /** Bound downloads before parsing; reject rather than truncate oversized articles. */
 async function downloadHtml(url: string, fetcher: typeof fetch): Promise<string> {

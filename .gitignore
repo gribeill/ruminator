@@ -4,6 +4,9 @@
 
 .dev.vars*
 
+# Local deployment notes
+/hosted-readiness.md
+
 # Local TypeScript app
 node_modules/
 .npm-cache/

@@ -15,6 +15,7 @@
  */
 
 import { parse } from 'smol-toml';
+import { categoriesFrom } from './arxiv.ts';
 import { BGE_CONFIG } from './bge-config.ts';
 import { validateWeights, type ScoreWeights } from './ranking.ts';
 import { validateFeedbackConfig, type FeedbackConfig } from './feedback.ts';
@@ -42,6 +43,7 @@ export function validateSummaryLimits(limits: SummaryLimits): void {
 }
 
 export interface Config {
+  ingestion: { categories: string[] };
   llm: { provider: 'cloudflare'; model: string };
   embedding: typeof BGE_CONFIG;
   scoring: { weights: ScoreWeights };
@@ -61,7 +63,7 @@ export function validateTokenizer(config: TokenizerConfig): void {
   }
 }
 
-/** Require explicit settings and reject typos; this file is also the editable documentation. */
+/** Require explicit model settings and reject typos. Hosted ingestion defaults to quant-ph. */
 export function parseConfig(text: string): Config {
   const raw = parse(text);
   function table(value: unknown, keys: string[], path: string): Record<string, unknown> {
@@ -71,7 +73,14 @@ export function parseConfig(text: string): Config {
     for (const key of keys) if (!(key in record)) throw new Error(`Missing configuration key: ${path}.${key}`);
     return record;
   }
-  table(raw, ['llm', 'embedding', 'scoring', 'tokenizer', 'summaries', 'feedback'], 'config');
+  if (!('ingestion' in raw)) raw.ingestion = { categories: ['quant-ph'] };
+  table(raw, ['ingestion', 'llm', 'embedding', 'scoring', 'tokenizer', 'summaries', 'feedback'], 'config');
+  const ingestion = table(raw.ingestion, ['categories'], 'ingestion');
+  if (!Array.isArray(ingestion.categories) || !ingestion.categories.length || ingestion.categories.length > 8 ||
+      ingestion.categories.some(c => typeof c !== 'string' || categoriesFrom(c).length !== 1 || categoriesFrom(c)[0] !== c)) {
+    throw new Error('ingestion.categories must contain 1–8 arXiv category names');
+  }
+  const categories = categoriesFrom(ingestion.categories.join(','));
   const llm = table(raw.llm, ['provider', 'model'], 'llm');
   if (llm.provider !== 'cloudflare') throw new Error('Changing LLM provider away from cloudflare is not yet supported');
   if (typeof llm.model !== 'string' || !llm.model.trim()) throw new Error('llm.model must be a nonempty model ID');
@@ -90,6 +99,6 @@ export function parseConfig(text: string): Config {
   validateSummaryLimits(summaries);
   const feedback = table(raw.feedback, ['min_similarity', 'near_duplicate_similarity'], 'feedback') as unknown as FeedbackConfig;
   validateFeedbackConfig(feedback);
-  return { llm: { provider: 'cloudflare', model: llm.model }, embedding: { ...BGE_CONFIG }, scoring: { weights: { ...weights } }, tokenizer: { ...tokenizer }, summaries: { ...summaries }, feedback: { ...feedback } };
+  return { ingestion: { categories }, llm: { provider: 'cloudflare', model: llm.model }, embedding: { ...BGE_CONFIG }, scoring: { weights: { ...weights } }, tokenizer: { ...tokenizer }, summaries: { ...summaries }, feedback: { ...feedback } };
 }
 

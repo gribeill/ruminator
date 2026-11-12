@@ -1,9 +1,15 @@
 # ruminator configuration and notes. Credentials belong in .env, never here.
 # Use --config path/to/config.toml to select another file.
 
+[ingestion]
+# Shared hosted weekday feeds. Local CLI category flags remain independent.
+# Saving this list does not enable a schedule or authorize model calls.
+categories = ["quant-ph"]
+
 [llm]
 # Changing the provider away from cloudflare is not yet supported.
-# Only the explicit `npm run summarize` command makes paid requests.
+# Local paid calls require summarize or generate --summarize. Hosted calls need
+# separately authorized execution; saving settings never starts inference.
 provider = "cloudflare"
 model = "openai/gpt-6-luna"
 # Account ID, gateway ID, and API token come from CLOUDFLARE_* environment variables.

@@ -60,6 +60,36 @@ test('hosted auth: real RSA/JWKS and workerd/D1 enforce public, owner, role, ses
       assert.equal((await request('/reader/vote', undefined, { method: 'POST', headers: { Origin: origin } })).status, 401);
     });
 
+    await t.test('cow navigation reflects account role on hosted pages without public-view links', async () => {
+      const publicDocument = parseHTML(publicHTML).document;
+      assert.match(publicDocument.querySelector('.cow-bubble')!.textContent!, /_+\n< Login +>\n -+/);
+      assert.equal(publicDocument.querySelector('.cow-bubble a')!.getAttribute('href'), '/login');
+      assert.equal(publicDocument.querySelector('.cow-email'), null);
+      assert.match(publicDocument.querySelector('footer')!.textContent!, new RegExp(`© Guilhem Ribeill ${new Date().getFullYear()}`));
+      for (const [token, email, paths, labels] of [
+        [friendToken, 'friend@example.test', ['/reader', '/interests'], ['Logout', 'Interests']],
+        [ownerToken, 'owner@example.test', ['/reader', '/interests', '/admin'], ['Logout', 'Interests', 'Admin']],
+      ] as const) {
+        for (const path of paths) {
+          const document = parseHTML(await (await request(path, token)).text()).document;
+          assert.equal(document.querySelector('footer')!.innerHTML, publicDocument.querySelector('footer')!.innerHTML);
+          const bubble = document.querySelector('.cow-bubble')!;
+          assert.deepEqual([...bubble.querySelectorAll('a')].map(a => a.textContent), [...labels]);
+          assert.equal(bubble.closest('[aria-hidden="true"]'), null);
+          assert.equal(document.querySelector('.brand-user .cow-email')!.textContent, `${email} | Digest`);
+          assert.equal(document.querySelector('.brand h1')!.nextElementSibling!.className, 'cow-email');
+          assert.equal(document.querySelector('.cow-email a')!.getAttribute('href'), '/reader');
+          assert.equal(document.querySelector('a[href="/"]'), null);
+          assert.equal(document.querySelector('.brand h1 a'), null);
+          const lines = bubble.textContent!.split('\n');
+          assert.equal(lines.length, 3);
+          assert.match(lines[0], /^ _+$/);
+          assert.match(lines[2], /^ -+$/);
+          assert.equal(lines[0].length + 1, lines[1].length);
+        }
+      }
+    });
+
     await t.test('signed app identity is required; forged, wrong-app, expired, and service identities fail closed', async () => {
       assert.equal((await request('/reader')).status, 401);
       assert.equal((await request('/reader', undefined, { headers: { 'Cf-Access-Authenticated-User-Email': 'owner@example.test' } })).status, 401);
@@ -112,6 +142,7 @@ test('hosted auth: real RSA/JWKS and workerd/D1 enforce public, owner, role, ses
       assert.equal(pending.status, 200);
       const waiting = await pending.text();
       assert.match(waiting, /next scheduled update/);
+      assert.equal(parseHTML(waiting).document.querySelector('.cow-email')!.textContent, 'new@example.test | Digest');
       assert.doesNotMatch(waiting, /Admin fixture|Friend private/);
       const user = await db.prepare("SELECT * FROM users WHERE email = 'new@example.test'").first<{ id: string; interests: string; role: string; enabled: number }>();
       assert.equal(user!.role, 'user');

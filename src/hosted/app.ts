@@ -1,16 +1,22 @@
 // Copyright 2026 Guilhem Ribeill
 // SPDX-License-Identifier: Apache-2.0
 
-import type { D1Database } from '@cloudflare/workers-types';
-import { createDigestRenderer, type ReadingLink } from '../render.ts';
+import type { D1Database, Workflow } from '@cloudflare/workers-types';
+import { brandStyles, createDigestRenderer, footerStyles, renderBrand, renderFooter, type CowNavigation } from '../render.ts';
 import { escapeHtml } from '../math.ts';
 import { paperAnchor, type VoteValue } from '../feedback.ts';
 import { readResponseText } from '../http-body.ts';
 import { accessVerifier, authSettings, formToken, verifyFormToken } from './auth.ts';
-import { provisionUser, readPublicReading, readReading, readUserVotes, saveUserVote, type User, type ReadingPublication } from './reading-store.ts';
+import { provisionUser, readPublicReading, readReading, readUserVotes, saveUserVote, ReadingUnavailableError, type User, type ReadingPublication } from './reading-store.ts';
 
-export interface HostedEnv {
+import { adminAction, adminControls } from './admin-controls.ts';
+import type { GenerationReference } from './daily-runs.ts';
+import { documentEditor } from './editors.ts';
+import { requireExecution, type ExecutionSettings } from './activation.ts';
+
+export interface HostedEnv extends ExecutionSettings {
   DB: D1Database;
+  GENERATION?: Workflow<GenerationReference>;
   PUBLIC_ORIGIN: string;
   ACCESS_ISSUER: string;
   ACCESS_AUDIENCE: string;
@@ -21,24 +27,27 @@ interface ReplyOptions {
   html?: boolean;
   headers?: Record<string, string>;
 }
-const publicLinks = [{ href: '/login', label: 'Log in to your reader' }];
-const privateLinks = (user: User): ReadingLink[] => [
-  { href: '/', label: 'Public listing' }, { href: '/reader', label: `Reader (${user.email})` },
-  { href: '/interests', label: 'Interests' }, ...(user.role === 'admin' ? [{ href: '/admin', label: 'Admin' }] : []),
-  { href: '/logout', label: 'Log out' },
-];
+const publicLinks: CowNavigation = { links: [{ href: '/login', label: 'Login' }] };
+const privateLinks = (user: User): CowNavigation => ({ email: user.email, links: [
+  { href: '/logout', label: 'Logout' }, { href: '/interests', label: 'Interests' },
+  ...(user.role === 'admin' ? [{ href: '/admin', label: 'Admin' }] : []),
+] });
 
-function page(title: string, body: string, links: ReadingLink[]): string {
+function page(title: string, body: string, navigation: CowNavigation): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(title)} · ruminator</title><style>body{max-width:800px;margin:auto;padding:1em;line-height:1.5;font-family:Optima,Candara,Calibri,Arial,sans-serif}pre{white-space:pre-wrap;overflow-wrap:anywhere}nav{border-bottom:1px dashed #ddd;padding-bottom:1em}</style></head>
-<body><header><h1>ruminator</h1><nav>${links.map(link => `<a href="${escapeHtml(link.href)}">${escapeHtml(link.label)}</a>`).join(' · ')}</nav></header>
-<main><h2>${escapeHtml(title)}</h2>${body}</main></body></html>`;
+<title>${escapeHtml(title)} · ruminator</title><style>body{max-width:800px;margin:auto;padding:1em;line-height:1.5;font-family:Optima,Candara,Calibri,Arial,sans-serif}pre{white-space:pre-wrap;overflow-wrap:anywhere}textarea{display:block;box-sizing:border-box;width:100%;font:inherit;font-family:monospace}label{display:block}button{font:inherit}${brandStyles}${footerStyles}</style></head>
+<body><header>${renderBrand(navigation)}</header>
+<main><h2>${escapeHtml(title)}</h2>${body}</main>${renderFooter()}</body></html>`;
 }
 
-/** This Worker only reads saved publications/accounts and writes authorized votes.
- * It has no inference, scheduler, generation, or administrative execution bindings.
+/** Reading and authorized mutations. Execution controls require an explicitly
+ * supplied Workflow binding; production/preview configurations do not enable it.
  */
 export function createHostedApp(env: HostedEnv) {
+  const execution = () => {
+    if (!env.GENERATION) return undefined;
+    try { requireExecution(env); return env.GENERATION; } catch { return undefined; }
+  };
   const settings = authSettings(env);
   const verify = accessVerifier(settings);
   const renderers = new Map<string, { identity: string; render: ReturnType<typeof createDigestRenderer> }>();
@@ -115,7 +124,18 @@ export function createHostedApp(env: HostedEnv) {
         }
         return reply(303, '', { headers: { Location: `/reader#${encodeURIComponent(paperAnchor(form.get('paper')!))}` } });
       }
-      if (!read) return reply(405, 'This operation is not available', { headers: { Allow: 'GET, HEAD' } });
+      if ((path === '/admin/rebuild' || path === '/admin/summaries') && request.method === 'POST') {
+        const result = await adminAction(request, env.DB, user, identity.session, path === '/admin/rebuild' ? 'rebuild' : 'summaries', execution());
+        return reply(result.status, result.location ? '' : page('Generation controls', result.body, privateLinks(user)),
+          { html: true, ...(result.location ? { headers: { Location: result.location } } : {}) });
+      }
+      if ((path === '/interests' || path === '/admin') && (read || request.method === 'POST')) {
+        const result = await documentEditor(request, env.DB, user, identity.session, path === '/interests' ? 'interests' : 'config');
+        const controls = path === '/admin' && read && !head ? await adminControls(env.DB, user, identity.session, !!execution()) : '';
+        return reply(result.status, result.location ? '' : page(path === '/interests' ? 'Your interests' : 'Admin configuration', result.body + controls, privateLinks(user)),
+          { html: true, ...(result.location ? { headers: { Location: result.location } } : {}) });
+      }
+      if (!read) return reply(405, 'This operation is not available', { headers: { Allow: path === '/interests' || path === '/admin' ? 'GET, HEAD, POST' : 'GET, HEAD' } });
       if (path === '/reader') {
         const publication = await readReading(env.DB, user.id);
         if (head) return reply(200, '', { html: true });
@@ -124,12 +144,9 @@ export function createHostedApp(env: HostedEnv) {
           : page('Your reader', '<p>Your listing will be prepared at the next scheduled update. You can review your default interests in the meantime.</p>', privateLinks(user));
         return reply(200, body, { html: true });
       }
-      if (path === '/interests') return reply(200, page('Your interests',
-        '<p>These interests apply to your next run. Editing and saving will be available in the next slice; viewing this page never starts a run.</p><pre>' + escapeHtml(user.interests) + '</pre>', privateLinks(user)), { html: true });
-      if (path === '/admin') return reply(200, page('Admin',
-        '<p>Configuration editing and explicit rebuild/regeneration controls are not implemented yet. No action on this page starts generation.</p>', privateLinks(user)), { html: true });
       return reply(404, 'Not found');
-    } catch {
+    } catch (error) {
+      if (error instanceof ReadingUnavailableError) return reply(503, error.message, { headers: { 'Retry-After': '1' } });
       return reply(500, 'Hosted request failed'); // No JWTs, private paper text, or credentials in errors/logs.
     }
   };

@@ -40,6 +40,16 @@ function digestFixture() {
   return digest;
 }
 
+test('footer uses the current year even with a cached older digest', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2030-06-01T12:00:00Z') });
+  const render = createDigestRenderer(digestFixture());
+  t.mock.timers.setTime(new Date('2031-06-01T12:00:00Z').getTime());
+  const footer = parseHTML(render()).document.querySelector('footer')!;
+  assert.match(footer.textContent!, /© Guilhem Ribeill 2031/);
+  assert.equal(footer.querySelector('a')!.getAttribute('href'), 'https://github.com/gribeill/ruminator');
+  assert.equal(footer.querySelector('.footer-cow')!.textContent, '  ^__^\n  (oo)');
+});
+
 test('compiled rendering snapshots paper content and safely updates only forms', () => {
   const digest = digestFixture();
   const voting = { csrfToken: 'token<&"', votes: { [digest.papers[0].id]: 1 as const } };
