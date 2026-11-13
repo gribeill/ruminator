@@ -6,7 +6,8 @@ See [the hosted guide](../../hosted.md) for preview commands, the security bound
 - `worker.ts`: HTTP entry, gated scheduled handler and exported `GenerationWorkflow`. Production enables confirmed admin actions and the authorized weekday 06:00 America/New_York schedule with the approved Workflow binding. Cron `0 10,11 * * MON-FRI` supplies both DST candidates; the intended-time gate admits only Eastern 06:00. Local preview keeps execution off.
 - `activation.ts`, `execution.ts`, `production-workflow.ts`: deployment-only activation/credential preflight and production adapter composition over the existing runner; no new job lifecycle or schema.
 - `html-source.ts`: bounded, credential-free, versioned arXiv HTML retrieval/re-extraction; no redirects, PDF fallback or retries.
-- `app.ts`: explicit routes, response/cache policy, and reading controls.
+- `app.ts`: explicit routes, response/cache policy, and reading controls. Vote POSTs keep native redirects by default, returning private/no-store JSON only for an explicit `Accept: application/json`.
+- `assets/votes.js`: hosted-only progressive vote enhancement, packaged with KaTeX by `scripts/hosted-assets.ts`. Updates only confirmed state, disables the affected paper while saving, reports failures inline, and never retries/resubmits automatically. Public/local readers remain script-free.
 - `auth.ts`: Access JWT/JWKS validation and session/scope-bound CSRF forms.
 - `editors.ts`: native interests/configuration forms, conflict preservation, and saved/applied ranking/summary revision status.
 - `populate-feed.ts`: admin-only, cohort paid-confirmation form that works before first publication; session/action/date/configuration/pass-bound tokens and atomic attempt IDs prevent replay. Fetches once, then launches independent per-user Workflows; already published batches are no-ops and unfinished work is never replaced.

@@ -85,6 +85,11 @@ clear_down = "Clear downvote"
 up_symbol = "+"
 down_symbol = "−"
 guidance = "Use + / − to affect future recommendations."
+saving = "Saving…"
+saved = "Saved."
+failed = "Could not confirm your vote. Reload to check before trying again."
+login = "Your session may have expired. Log in again or reload your reader."
+stale = "Your session or listing has changed, or your account is unavailable. Reload your reader."
 
 [summary]
 unavailable = "Summary unavailable: {reason}"

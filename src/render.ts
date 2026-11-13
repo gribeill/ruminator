@@ -19,12 +19,14 @@ import type { Digest } from './digest.ts';
 import { escapeHtml as escape, renderMathText } from './math.ts';
 import { compactAuthors, displayName } from './authors.ts';
 import { uiText, uiHtml } from './ui-text.ts';
-import { paperAnchor, type Votes } from './feedback.ts';
+import { paperAnchor, type Votes, type VoteValue } from './feedback.ts';
 
 export interface VotingView {
   votes: Votes;
   csrfToken: string;
   action?: string;
+  /** Hosted-only progressive enhancement; ordinary forms remain the fallback. */
+  enhance?: boolean;
 }
 
 export interface ReadingLink { href: string; label: string }
@@ -64,15 +66,26 @@ export function renderFooter(): string {
   return `<footer>${uiHtml('footer.copyright', { year: new Date().getFullYear() })} | <a href="https://github.com/gribeill/ruminator">${uiHtml('footer.github')}</a> | <span class="footer-cow" aria-hidden="true">  ^__^\n  (oo)</span></footer>`;
 }
 
+/** One source for native forms and confirmed JSON updates, including accessible copy. */
+export function voteButtonStates(current: VoteValue) {
+  return ([1, -1] as const).map(direction => {
+    const pressed = current === direction;
+    const label = pressed ? direction === 1 ? 'votes.clear_up' : 'votes.clear_down'
+      : direction === 1 ? 'votes.more' : 'votes.less';
+    return { value: pressed ? 0 : direction, pressed, label: uiText(label),
+      title: uiText(pressed ? label : direction === 1 ? 'votes.more_tooltip' : 'votes.less_tooltip'),
+      symbol: uiText(direction === 1 ? 'votes.up_symbol' : 'votes.down_symbol') };
+  });
+}
+
 function voteControls(id: string, voting?: VotingView): string {
   if (!voting) return '';
-  const current = voting.votes[id] ?? 0;
-  return `<form class="vote-controls" method="post" action="${escape(voting.action ?? '/vote')}">
+  const enhancement = voting.enhance ? ' data-enhanced-votes' : '';
+  return `<form class="vote-controls" method="post" action="${escape(voting.action ?? '/vote')}"${enhancement}>
 <input type="hidden" name="paper" value="${escape(id)}">
 <input type="hidden" name="token" value="${escape(voting.csrfToken)}">
-<button type="submit" name="value" value="${current === 1 ? 0 : 1}" aria-pressed="${current === 1}" aria-label="${uiHtml(current === 1 ? 'votes.clear_up' : 'votes.more')}" title="${uiHtml(current === 1 ? 'votes.clear_up' : 'votes.more_tooltip')}">${uiHtml('votes.up_symbol')}</button>
-<button type="submit" name="value" value="${current === -1 ? 0 : -1}" aria-pressed="${current === -1}" aria-label="${uiHtml(current === -1 ? 'votes.clear_down' : 'votes.less')}" title="${uiHtml(current === -1 ? 'votes.clear_down' : 'votes.less_tooltip')}">${uiHtml('votes.down_symbol')}</button>
-</form>`;
+${voteButtonStates(voting.votes[id] ?? 0).map(button => `<button type="submit" name="value" value="${button.value}" aria-pressed="${button.pressed}" aria-label="${escape(button.label)}" title="${escape(button.title)}">${escape(button.symbol)}</button>`).join('\n')}
+${voting.enhance ? '<span role="status" aria-atomic="true"></span>' : ''}</form>`;
 }
 
 // Keep the cow as literal text, then escape it like any other HTML content.
@@ -199,7 +212,8 @@ ${remainingViews.map(render => render(voting)).join('\n')}
 </section>
 </main>
 ${renderFooter()}
-</body>
+${voting?.enhance ? `<script src="/assets/votes.js" defer ${['saving', 'saved', 'failed', 'login', 'stale']
+  .map(key => `data-${key}="${uiHtml(`votes.${key}`)}"`).join(' ')}></script>` : ''}</body>
 </html>`;
 }
 

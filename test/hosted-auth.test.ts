@@ -183,6 +183,34 @@ test('hosted auth: real RSA/JWKS and workerd/D1 enforce public, owner, role, ses
       assert.equal(await (await request('/')).text(), publicHTML);
     });
 
+    await t.test('hosted JSON votes persist without redirects; native forms remain the fallback', async () => {
+      const reader = await request('/reader', friendToken);
+      const document = parseHTML(await reader.text()).document;
+      assert.equal(document.querySelector('script[src="/assets/votes.js"]')!.hasAttribute('defer'), true);
+      assert.ok(document.querySelector('form[data-enhanced-votes] [role="status"]'));
+      assert.match(reader.headers.get('content-security-policy')!, /script-src 'self'; connect-src 'self'/);
+      assert.equal(parseHTML(publicHTML).document.querySelector('script'), null);
+      const asset = await request('/assets/votes.js');
+      assert.equal(asset.status, 200);
+      assert.match(asset.headers.get('content-type')!, /javascript/);
+      const before = await readReading(db, friend.id), body = await form(friendToken);
+      const saved = await post(friendToken, body, { Accept: 'application/json' });
+      assert.equal(saved.status, 200);
+      assert.equal(saved.headers.get('location'), null);
+      assert.match(saved.headers.get('content-type')!, /application\/json/);
+      assert.match(saved.headers.get('cache-control')!, /private, no-store/);
+      const result = await saved.json() as { paper: string; value: number; buttons: { value: number; pressed: boolean; label: string }[] };
+      assert.equal(result.paper, body.get('paper'));
+      assert.equal(result.value, 1);
+      assert.deepEqual(result.buttons.map(b => [b.value, b.pressed]), [[0, true], [-1, false]]);
+      assert.equal((await readUserVotes(db, friend.id))[result.paper], 1);
+      body.set('value', '0');
+      assert.equal((await post(friendToken, body)).status, 303); // No JSON opt-in: unchanged form fallback.
+      assert.deepEqual(await readUserVotes(db, friend.id), {});
+      assert.deepEqual(await readReading(db, friend.id), before);
+      assert.equal(await (await request('/')).text(), publicHTML);
+    });
+
     await t.test('vote forms enforce identity/session/origin/publication binding and bounded valid inputs', async () => {
       const body = await form(friendToken);
       const before = await readUserVotes(db, friend.id);
@@ -197,6 +225,10 @@ test('hosted auth: real RSA/JWKS and workerd/D1 enforce public, owner, role, ses
       const old = (await readReading(db, friend.id))!;
       await publishFixture(db, friend.id, fixtureDigest('Replacement private fixture'));
       assert.equal((await post(friendToken, body)).status, 403);
+      const staleJSON = await post(friendToken, body, { Accept: 'application/json' });
+      assert.equal(staleJSON.status, 403);
+      assert.match(staleJSON.headers.get('content-type')!, /application\/json/);
+      assert.equal(typeof (await staleJSON.json() as { error: string }).error, 'string');
       assert.equal(await saveUserVote(db, friend.id, old.generationId, body.get('paper')!, 1), false);
       assert.deepEqual(await readUserVotes(db, friend.id), before);
       assert.deepEqual(await readUserVotes(db, owner.id), {});

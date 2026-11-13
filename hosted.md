@@ -34,6 +34,7 @@ Stop with Ctrl-C. Preview accounts, votes, saved document edits, and signing key
 | --- | --- |
 | `/` | Public admin publication, identical regardless of login; no vote forms or private account state. |
 | `/assets/katex/*` | Public local CSS/fonts only. |
+| `/assets/votes.js` | Public, small same-origin vote enhancement; no user data. |
 | `/login` | Sends the browser to the protected reader; real Cloudflare Access will handle email-code login. |
 | `/logout` | Redirects to the Access logout endpoint; the local fixture clears its cookie. |
 | `/reader` | Signed-in user's saved listing and voting forms, or a waiting message. |
@@ -43,6 +44,14 @@ Stop with Ctrl-C. Preview accounts, votes, saved document edits, and signing key
 | `/admin/populate` | Admin-only paid-confirmed POST: fetch announcements once and launch ranking/full-text/summary Workflows for all enabled users. |
 
 Local preview keeps execution off and has no Workflow binding or cron. Production enables explicit admin actions and weekday 06:00 America/New_York generation for all enabled users, within their independent saved limits. Scheduling is standing authorization for potentially paid inference; it observes DST and remains deduplicated by intended date. Visiting a page or saving a document never starts inference.
+
+### Voting with or without JavaScript
+
+Hosted reader vote forms work without JavaScript: submit, save, then redirect back to the paper. With JavaScript, a small same-origin script requests JSON from the same endpoint (`Accept: application/json`) and updates only that paper's buttons after confirmed persistence. Other reading state and ranking/order are unchanged; standalone local voting remains native.
+
+Only the affected paper's buttons are disabled while saving. Inline live-region messages report saved votes, stale listings/accounts, expired Access sessions, or an unconfirmed request. Requests time out after 15 seconds, do not follow login redirects, and never automatically retry or fall back to another POST; a failed response can be ambiguous, so reload to check before trying again. Authentication, enabled/ownership checks, Origin, CSRF and publication/session binding are identical for JSON and native submissions. Private responses remain no-store. The reader's CSP permits only same-origin scripts/connections; public reading and editors do not enable scripts. Browser copy stays in `ui_text.toml`.
+
+Asset preparation (`node scripts/hosted-assets.ts`) copies the vote script alongside KaTeX. No framework, extra dependency, database/schema change, or deployment is required merely to implement or preview this feature.
 
 ### Populate feed
 
@@ -480,7 +489,7 @@ or generation binding.
 - A local HTTP issuer is allowed only alongside a loopback HTTP application origin. There is no skip-auth flag or hardcoded signing key in the Worker. Every request must match `PUBLIC_ORIGIN`, so alternate Worker hostnames cannot bypass the boundary. Proxy/forwarded headers do not choose the issuer or redirect destination.
 - Every private request reads the D1 enabled state/role. Private pages, redirects, and errors use `private, no-store`. Public output never depends on login; static paper rendering is reused per publication and audience, with only authorized votes/forms assembled live.
 - Forms use a per-user HMAC bound to the JWT session and publication. POSTs require the exact application Origin, a bounded form body, and exactly the expected fields. The vote transaction rechecks enabled state, ownership, current publication, and membership. Repeated desired states do not renew vote timestamps.
-- Paper text and interests are escaped; KaTeX trust features remain off. Pages use a restrictive CSP and no browser JavaScript. Credentials, JWTs, and raw authentication errors are not logged or returned.
+- Paper text and interests are escaped; KaTeX trust features remain off. Pages use a restrictive CSP; only the private reader enables the same-origin vote script and fetch connections, with native forms as the no-JavaScript fallback. Credentials, JWTs, and raw authentication errors are not logged or returned.
 
 For immediate removal, **disable the D1 user as well as removing their Access invitation and revoking their Access sessions**. Offline JWT verification cannot discover per-session revocation by itself. Access's [logout endpoint](https://developers.cloudflare.com/cloudflare-one/access-controls/access-settings/session-management/#log-out-as-a-user) clears its browser cookie and revokes sessions at the edge; Cloudflare documents a 20–30 second propagation delay. Disabling the application user blocks subsequent private requests without waiting for token expiry. The local fixture demonstrates cookie logout, not real Cloudflare revocation.
 

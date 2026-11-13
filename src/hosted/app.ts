@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { D1Database, Workflow } from '@cloudflare/workers-types';
-import { brandStyles, createDigestRenderer, footerStyles, renderBrand, renderFooter, type CowNavigation } from '../render.ts';
+import { brandStyles, createDigestRenderer, footerStyles, renderBrand, renderFooter, voteButtonStates, type CowNavigation } from '../render.ts';
 import { escapeHtml } from '../math.ts';
 import { paperAnchor, type VoteValue } from '../feedback.ts';
 import { readResponseText } from '../http-body.ts';
@@ -27,6 +27,7 @@ export interface HostedEnv extends ExecutionSettings {
 interface ReplyOptions {
   publicPage?: boolean;
   html?: boolean;
+  enhancedVotes?: boolean;
   headers?: Record<string, string>;
 }
 const publicLinks: CowNavigation = { links: [{ href: '/login', label: uiText('navigation.login') }] };
@@ -65,16 +66,20 @@ export function createHostedApp(env: HostedEnv, fetcher: typeof fetch = fetch) {
   }
   return async (request: Request): Promise<Response> => {
     const head = request.method === 'HEAD';
+    const jsonVote = request.method === 'POST' && new URL(request.url).pathname === '/reader/vote'
+      && request.headers.get('accept') === 'application/json';
     // Private/no-store is the default; public reading opts in explicitly.
-    const reply = (status: number, body: string, options: ReplyOptions = {}) => new Response(head ? null : body, {
+    const reply = (status: number, body: string, options: ReplyOptions = {}) => new Response(head ? null
+      : jsonVote && status >= 400 ? JSON.stringify({ error: uiText(status === 401 ? 'votes.login' : 'votes.failed') }) : body, {
       status, headers: {
-        'Content-Type': options.html ? 'text/html; charset=utf-8' : 'text/plain; charset=utf-8',
+        'Content-Type': jsonVote ? 'application/json; charset=utf-8' : options.html ? 'text/html; charset=utf-8' : 'text/plain; charset=utf-8',
         'Cache-Control': options.publicPage ? 'public, max-age=0, must-revalidate' : 'private, no-store',
         ...(options.publicPage ? {} : { Vary: 'Cookie, Cf-Access-Jwt-Assertion' }),
         // no-referrer makes Chromium serialize form-POST Origin as null. Keep
         // same-origin forms working without sending referrers to external sites.
         'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'same-origin',
-        'Content-Security-Policy': "default-src 'none'; style-src 'self' 'unsafe-inline'; font-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+        'Content-Security-Policy': "default-src 'none'; style-src 'self' 'unsafe-inline'; font-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+          + (options.enhancedVotes ? "; script-src 'self'; connect-src 'self'" : ''),
         ...options.headers,
       },
     });
@@ -85,11 +90,12 @@ export function createHostedApp(env: HostedEnv, fetcher: typeof fetch = fetch) {
       if (url.origin !== settings.origin) return reply(403, uiText('errors.unexpected_origin'));
       const path = url.pathname;
       const read = ['GET', 'HEAD'].includes(request.method);
-      if (/^\/assets\/katex\/(?:katex\.min\.css|fonts\/[A-Za-z0-9_.-]+\.(?:woff2?|ttf))$/.test(path) && read) {
+      if ((path === '/assets/votes.js' || /^\/assets\/katex\/(?:katex\.min\.css|fonts\/[A-Za-z0-9_.-]+\.(?:woff2?|ttf))$/.test(path)) && read) {
         const asset = await env.ASSETS.fetch(request.url, { method: request.method });
         return new Response(asset.body, { status: asset.status, headers: {
           'Content-Type': asset.headers.get('content-type') ?? 'application/octet-stream',
-          'Cache-Control': 'public, max-age=86400', 'X-Content-Type-Options': 'nosniff',
+          'Cache-Control': path === '/assets/votes.js' ? 'public, max-age=0, must-revalidate' : 'public, max-age=86400',
+          'X-Content-Type-Options': 'nosniff',
         } });
       }
       if (path === '/') {
@@ -123,9 +129,11 @@ export function createHostedApp(env: HostedEnv, fetcher: typeof fetch = fetch) {
         if (!publication || !await verifyFormToken(form.get('token')!, user.csrf_secret, user.id, identity.session, publication.generationId)) {
           return reply(403, uiText('errors.vote_form_stale'));
         }
-        if (!await saveUserVote(env.DB, user.id, publication.generationId, form.get('paper')!, Number(form.get('value')) as VoteValue)) {
+        const value = Number(form.get('value')) as VoteValue;
+        if (!await saveUserVote(env.DB, user.id, publication.generationId, form.get('paper')!, value)) {
           return reply(409, uiText('errors.vote_listing_stale'));
         }
+        if (jsonVote) return reply(200, JSON.stringify({ paper: form.get('paper'), value, buttons: voteButtonStates(value) }));
         return reply(303, '', { headers: { Location: `/reader#${encodeURIComponent(paperAnchor(form.get('paper')!))}` } });
       }
       if (path === '/admin/populate' && request.method === 'POST') {
@@ -151,11 +159,11 @@ export function createHostedApp(env: HostedEnv, fetcher: typeof fetch = fetch) {
       if (!read) return reply(405, uiText('errors.operation_unavailable'), { headers: { Allow: path === '/interests' || path === '/admin' ? 'GET, HEAD, POST' : 'GET, HEAD' } });
       if (path === '/reader') {
         const publication = await readReading(env.DB, user.id);
-        if (head) return reply(200, '', { html: true });
+        if (head) return reply(200, '', { html: true, enhancedVotes: !!publication });
         const body = publication ? renderer(publication, user)({ votes: await readUserVotes(env.DB, user.id),
-          csrfToken: await formToken(user.csrf_secret, user.id, identity.session, publication.generationId), action: '/reader/vote' })
+          csrfToken: await formToken(user.csrf_secret, user.id, identity.session, publication.generationId), action: '/reader/vote', enhance: true })
           : page(uiText('reading.reader_title'), `<p>${uiHtml('reading.reader_waiting')}</p>`, privateLinks(user));
-        return reply(200, body, { html: true });
+        return reply(200, body, { html: true, enhancedVotes: !!publication });
       }
       return reply(404, uiText('errors.not_found'));
     } catch (error) {
