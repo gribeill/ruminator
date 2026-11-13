@@ -3,7 +3,7 @@
 See [the hosted guide](../../hosted.md) for preview commands, the security boundary, limitations, and deployment prerequisites.
 
 - `workflow-limits.ts`: four embedding requests/one summary request per ten-minute callback, leaving one minute beyond worst-case transport timeouts; per-request input batches are unchanged.
-- `worker.ts`: HTTP entry, gated scheduled handler and exported `GenerationWorkflow`. Production enables confirmed admin actions and the authorized weekday 06:00 America/New_York schedule with the approved Workflow binding. Cron `0 10,11 * * 1-5` supplies both DST candidates; the intended-time gate admits only Eastern 06:00. Local preview keeps execution off.
+- `worker.ts`: HTTP entry, gated scheduled handler and exported `GenerationWorkflow`. Production enables confirmed admin actions and the authorized weekday 06:00 America/New_York schedule with the approved Workflow binding. Cron `0 10,11 * * MON-FRI` supplies both DST candidates; the intended-time gate admits only Eastern 06:00. Local preview keeps execution off.
 - `activation.ts`, `execution.ts`, `production-workflow.ts`: deployment-only activation/credential preflight and production adapter composition over the existing runner; no new job lifecycle or schema.
 - `html-source.ts`: bounded, credential-free, versioned arXiv HTML retrieval/re-extraction; no redirects, PDF fallback or retries.
 - `app.ts`: explicit routes, response/cache policy, and reading controls.

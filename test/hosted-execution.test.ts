@@ -141,7 +141,8 @@ test('local preview remains inert; production declares only the authorized weekd
         assert.doesNotMatch(config, /"workflows"\s*:/);
       } else {
         assert.match(config, /"HOSTED_SCHEDULE_ENABLED": "true"/);
-        assert.match(config, /"crons"\s*:\s*\["0 10,11 \* \* 1-5"\]/);
+        // Cloudflare uses 1 = Sunday, not Unix's 0 = Sunday. Named days include Friday.
+        assert.match(config, /"crons"\s*:\s*\["0 10,11 \* \* MON-FRI"\]/);
       }
     }
   } finally { await fixture.close(); }

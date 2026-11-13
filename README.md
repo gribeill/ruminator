@@ -85,4 +85,4 @@ Invite-only hosted reading is in development. Run `npm run dev:hosted` to try th
 
 Working data lives in `data/`: feed/text caches, the current listing and votes, and downloaded model assets. This is not an archive. Votes expire during generation after 365 days without an explicit change. Keep data you value before deleting databases; see [storage and resets](commands.md#storage-and-resets).
 
-For development, run `npm test` and `npm run typecheck`. Tests use local fixtures and make no external API or model calls. The [development plan](.agents/PLAN.md) records architecture and implementation decisions; [commands.md](commands.md#development-checks) covers optional model checks.
+For development, run `npm test` and `npm run typecheck`. Tests use local fixtures and make no external API or model calls. CI also runs `npm audit` and Gitleaks; see [security scanning](commands.md#security-scanning) to run them locally. The [development plan](.agents/PLAN.md) records architecture and implementation decisions; [commands.md](commands.md#development-checks) covers optional model checks.

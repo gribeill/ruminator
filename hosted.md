@@ -413,7 +413,7 @@ false in the manifests, with no active cron or Workflow binding. The internal
 entry requires an explicit feed transport and Workflow binding. Saving
 configuration is not execution authorization.
 
-A future **single** `0 10,11 * * 1-5` UTC cron expression can supply the two DST
+A future **single** `0 10,11 * * MON-FRI` UTC cron expression can supply the two DST
 candidates. The gate accepts only the event timestamp corresponding to weekday
 06:00 America/New_York—not its delivery time. It rejects future events and events
 past their next-weekday boundary. Delayed accepted events retain their original

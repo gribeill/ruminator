@@ -187,6 +187,20 @@ npm run typecheck
 
 These checks use recorded feeds/HTML, real SQLite, and local HTTP fixtures; they do not contact arXiv, download models, or make paid calls.
 
+### Security scanning
+
+Install the [Gitleaks CLI](https://github.com/gitleaks/gitleaks#installing) on your PATH (CI uses version 8.30.1), then run:
+
+```sh
+npm run security:audit    # npm advisory check, including development dependencies
+npm run security:secrets  # Gitleaks, with secret values redacted
+npm run security         # Both checks
+```
+
+CI runs both checks on pushes and pull requests. `npm audit` contacts the npm advisory service and fails on reported vulnerabilities at any severity; do not blindly run `npm audit fix --force`.
+
+The secret scan copies current tracked files and non-ignored new files into a temporary directory, scans them with Gitleaks's default rules, and removes the copy afterward. It does not scan historical commits or ignored local files such as `.env`, `data/`, and `.wrangler/`. A credential file accidentally tracked with Git is still scanned even when its name matches `.gitignore`. Deleted files, submodule contents, and symlink targets outside the repository are not copied. `.gitleaks.toml` extends the default rules with exact-value, file-scoped exceptions for the public tokenizer revision/checksums and Access audience identifier. There are no blanket file exclusions or historical baseline. This is a guardrail, not a guarantee that every credential format will be recognized.
+
 Optional real-model checks:
 
 ```sh

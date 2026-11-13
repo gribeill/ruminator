@@ -2,6 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   // Approved weekday 06:00 America/New_York schedule, including DST.
   // Both UTC candidates fire; scheduledRunDate admits only the Eastern 06:00 event.
+  // Use named weekdays: Cloudflare numbers Sunday as 1, so 1-5 excludes Friday.
   "name": "ruminator",
   "main": "src/hosted/worker.ts",
   "rules": [{ "type": "Text", "globs": ["**/ui_text.toml"], "fallthrough": true }],
@@ -18,7 +19,7 @@
     "ACCESS_ISSUER": "https://ruminator.cloudflareaccess.com",
     "ACCESS_AUDIENCE": "c280d8a4336c21c167a4c8b0f92ff6ff48dcd7d0184f76bff75b05a12391c6ef"
   },
-  "triggers": { "crons": ["0 10,11 * * 1-5"] },
+  "triggers": { "crons": ["0 10,11 * * MON-FRI"] },
   "assets": { "directory": ".wrangler/hosted-assets", "binding": "ASSETS", "run_worker_first": true },
   "workflows": [{
     "binding": "GENERATION",
